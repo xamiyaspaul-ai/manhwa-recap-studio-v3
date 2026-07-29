@@ -1,0 +1,103 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Post {
+  id        String   @id @default(cuid())
+  title     String
+  content   String?
+  published Boolean  @default(false)
+  authorId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Master Recap Pipeline models
+// ---------------------------------------------------------------------------
+
+model Job {
+  id          String    @id @default(cuid())
+  mangaId     String    // MangaDex manga id
+  mangaTitle  String
+  coverUrl    String?
+  language    String    @default("en") // requested language
+  sourceLang  String?   // actual source language of scraped chapters
+  status      String    @default("pending") // pending|scraping|summarizing|translating|rendering|merging|done|error
+  progress    Int       @default(0) // 0-100
+  stage       String?   // current stage label
+  message     String?   // last log message
+  totalChapters Int     @default(0)
+  doneChapters  Int     @default(0)
+  totalImages   Int     @default(0)
+  doneImages    Int     @default(0)
+  outputDir   String?   // where the final mp4 lives
+  outputVideo String?   // final mp4 file name
+  r2Key       String?   // Cloudflare R2 object key, if uploaded (local file is freed once set)
+  error       String?
+  groqKey     String?   // per-job Groq api key (user-provided)
+  openaiKey   String?   // per-job OpenAI api key (optional)
+  voice       String    @default("en-US-AndrewNeural")
+  chapterLimit Int      @default(0) // 0 = all chapters
+  translate   Boolean   @default(true)
+  bgmPath     String?   // path to background music file (relative to data/bgm/)
+  useBgm      Boolean   @default(true) // whether to overlay BGM
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  chapters    Chapter[]
+  logs        JobLog[]
+}
+
+model Chapter {
+  id          String   @id @default(cuid())
+  jobId       String
+  index       Int      // 1-based
+  mangadexId  String   // MangaDex chapter id
+  chapterNum  String?  // e.g. "12", "12.5"
+  title       String?
+  language    String
+  pageCount   Int      @default(0)
+  translated  Boolean  @default(false)
+  summarized  Boolean  @default(false)
+  rendered    Boolean  @default(false)
+  folder      String   // relative path under data/jobs/{jobId}/dataset/
+  status      String   @default("pending") // pending|scraped|summarized|translated|rendered|error
+  error       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+model JobLog {
+  id        String   @id @default(cuid())
+  jobId     String
+  level     String   @default("info") // info|warn|error|success
+  stage     String?
+  message   String
+  createdAt DateTime @default(now())
+
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+model Setting {
+  id    String @id
+  value String
+}

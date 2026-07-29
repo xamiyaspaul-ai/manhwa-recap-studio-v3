@@ -1,0 +1,2286 @@
+#!/usr/bin/env python3
+"""
+master_pipeline.py
+===================
+Production-grade CLI pipeline that converts a local dataset of webtoon/manhwa
+chapter images (dataset/chapter_001/, dataset/chapter_002/, ...) into a single
+master recap video with narration and background music.
+
+INPUT ASSUMPTION: You already own/control the source images and text summaries
+and have placed them locally under --input-dir. This script does NOT fetch
+content from third-party websites — point it at a folder you already have.
+
+Expected folder layout:
+
+    <input-dir>/
+        chapter_001/
+            001.jpg
+            002.jpg
+            ...
+            summary.txt      (raw text describing what happens in the chapter)
+        chapter_002/
+            ...
+
+Pipeline stages (each resumable / skippable if output already exists):
+    1. Ingestion         -> discover + sort chapter folders and panel images
+    2. Panel slicing     -> gutter-aware slicing into individual panel frames
+    3a. Translation      -> Groq (OpenAI-compatible endpoint) translates non-English
+                             chapter text to English before rewriting
+    3b. Narrative rewrite-> OpenAI rephrase with cross-chapter continuity
+    4. Narration TTS     -> each source panel's full narration is voiced with ONE
+                             continuous edge-tts call (no per-word chopping/seams)
+    5. Chapter render    -> static-panel video per chapter, each frame's
+                             on-screen duration derived from narration timing
+    6. Merge + BGM       -> ffmpeg concat (stream copy) + background music mix
+
+Run `python master_pipeline.py --help` for CLI usage.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import List, Optional
+
+# ---------------------------------------------------------------------------
+# Third-party deps. cv2 + numpy are imported eagerly because they're needed by
+# the panel-slicing step (the most performance-critical path) and the lazy
+# per-function imports caused intermittent "name 'cv2' is not defined" errors
+# when slicing many chapters. PIL is still lazy-imported inside functions
+# since it's only used in a few spots.
+# ---------------------------------------------------------------------------
+try:
+    import cv2  # type: ignore
+    import numpy as np  # type: ignore
+except ImportError:  # pragma: no cover
+    cv2 = None  # type: ignore
+    np = None  # type: ignore
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+CANVAS_W, CANVAS_H = 1920, 1080
+OVERLAP_RATIO = 0.0  # No overlap — each panel gets its own clean frame
+FPS = 24  # YouTube-standard 24fps
+AUDIO_SAMPLE_RATE = 44100
+AUDIO_BITRATE = "192k"  # higher quality audio for narration
+SILENT_FRAME_DURATION = 6.0  # seconds a frame holds on screen if it has no narration text
+MIN_FRAME_DURATION = 3.0  # minimum seconds per frame — prevents panels from flashing by too fast
+FRAME_HOLD_PADDING = 0.5  # extra seconds a frame stays on screen AFTER its narration audio ends,
+                          # so the viewer can read the panel text even after the voice finishes.
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+MAX_FRAMES_PER_PANEL = 4  # Cap frames per source panel (prevents overslicing tall splash panels)
+
+# Phase 3: Audio post-processing targets (YouTube standard)
+TARGET_LOUDNESS_LUFS = -14  # YouTube's standard loudness target
+BGM_DUCK_DB = -18  # BGM sidechain-ducked by 18dB when voice is active
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-7s | %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("master_pipeline")
+
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PipelineConfig:
+    input_dir: Path
+    output_path: Path
+    total_chapters: Optional[int]
+    bgm_path: Optional[Path]
+    work_dir: Path
+    voice: str = "en-US-AndrewNeural"
+    openai_model: str = "gpt-4o-mini"
+    openai_api_key: Optional[str] = None
+    keep_temp: bool = False
+    groq_api_key: Optional[str] = None
+    groq_model: str = "llama-3.3-70b-versatile"
+    translate: bool = True
+    narration_provider: str = "auto"  # auto|openai|groq|none
+    narration_model: Optional[str] = None  # override model for narration
+    progress_file: Optional[Path] = None  # JSON file the Node service polls
+    slice_only: bool = False  # if True, only run panel slicing then exit (used by the Node orchestrator so VLM can read individual sliced panels)
+
+    @property
+    def temp_audio_dir(self) -> Path:
+        return self.work_dir / "temp_audio"
+
+    @property
+    def temp_chapters_dir(self) -> Path:
+        return self.work_dir / "temp_chapters"
+
+    @property
+    def temp_slices_dir(self) -> Path:
+        return self.work_dir / "temp_slices"
+
+    @property
+    def temp_scripts_dir(self) -> Path:
+        return self.work_dir / "temp_scripts"
+
+    @property
+    def state_file(self) -> Path:
+        return self.work_dir / "pipeline_state.json"
+
+    def ensure_dirs(self) -> None:
+        for d in (
+            self.temp_audio_dir,
+            self.temp_chapters_dir,
+            self.temp_slices_dir,
+            self.temp_scripts_dir,
+        ):
+            d.mkdir(parents=True, exist_ok=True)
+
+    def write_progress(self, stage: str, chapter_index: int, total_chapters: int,
+                       message: str, status: str = "running") -> None:
+        """Write a small JSON status file the Node orchestrator polls."""
+        if not self.progress_file:
+            return
+        try:
+            pct = int(round((chapter_index / max(1, total_chapters)) * 100)) if total_chapters else 0
+            payload = {
+                "stage": stage,
+                "chapter_index": chapter_index,
+                "total_chapters": total_chapters,
+                "progress": pct,
+                "message": message,
+                "status": status,
+                "updated_at": time.time(),
+            }
+            tmp = self.progress_file.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload), encoding="utf-8")
+            tmp.replace(self.progress_file)
+        except Exception:
+            pass
+
+
+@dataclass
+class Chapter:
+    index: int
+    name: str
+    folder: Path
+    panel_paths: List[Path] = field(default_factory=list)
+    summary_text: str = ""  # backward compat (from summary.txt)
+    image_narrations: dict = field(default_factory=dict)  # filename -> narration text (from narration.json)
+
+    @property
+    def tag(self) -> str:
+        return f"chap_{self.index:03d}"
+
+
+# ---------------------------------------------------------------------------
+# 1. INGESTION
+# ---------------------------------------------------------------------------
+
+def natural_sort_key(p: Path):
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", p.stem)]
+
+
+def discover_chapters(cfg: PipelineConfig) -> List[Chapter]:
+    """Scan input_dir for chapter_XXX folders, sort numerically, load panels + summary."""
+    if not cfg.input_dir.exists():
+        raise FileNotFoundError(f"Input directory not found: {cfg.input_dir}")
+
+    chapter_dirs = sorted(
+        [d for d in cfg.input_dir.iterdir() if d.is_dir()],
+        key=natural_sort_key,
+    )
+    if not chapter_dirs:
+        raise FileNotFoundError(f"No chapter subfolders found in {cfg.input_dir}")
+
+    if cfg.total_chapters:
+        chapter_dirs = chapter_dirs[: cfg.total_chapters]
+
+    chapters: List[Chapter] = []
+    for i, d in enumerate(chapter_dirs, start=1):
+        panels = sorted(
+            [p for p in d.iterdir() if p.suffix.lower() in IMAGE_EXTS],
+            key=natural_sort_key,
+        )
+        if not panels:
+            log.warning("Chapter folder %s has no images — skipping", d.name)
+            continue
+
+        # Load per-image narrations if available (preferred), else fall back to summary.txt.
+        narration_file = d / "narration.json"
+        summary_text = ""
+        image_narrations: dict = {}
+        if narration_file.exists():
+            try:
+                narr_data = json.loads(narration_file.read_text(encoding="utf-8"))
+                if isinstance(narr_data, list):
+                    for item in narr_data:
+                        if isinstance(item, dict) and "image" in item and "text" in item:
+                            image_narrations[item["image"]] = item["text"]
+                    log.info("[%s] loaded %d per-image narrations from narration.json", d.name, len(image_narrations))
+            except Exception as e:
+                log.warning("[%s] failed to parse narration.json: %s", d.name, e)
+
+        if not image_narrations:
+            summary_file = d / "summary.txt"
+            summary_text = summary_file.read_text(encoding="utf-8").strip() if summary_file.exists() else ""
+            if not summary_text:
+                log.warning(
+                    "No narration.json or summary.txt in %s — narrative rewrite will run on empty text",
+                    d.name,
+                )
+
+        chapters.append(
+            Chapter(
+                index=i, name=d.name, folder=d, panel_paths=panels,
+                summary_text=summary_text, image_narrations=image_narrations,
+            )
+        )
+
+    log.info("Discovered %d chapters (%d total panel images)", len(chapters), sum(len(c.panel_paths) for c in chapters))
+    return chapters
+
+
+# ---------------------------------------------------------------------------
+# 2a. FAST FRAME PREPARATION (no slicing — one frame per source image)
+# ---------------------------------------------------------------------------
+
+def _fast_prepare_frames(cfg: PipelineConfig, chapter: Chapter) -> List[tuple]:
+    """Prepare one 1920x1080 canvas frame per source panel image, centered and
+    scaled to fit. This avoids the expensive slicing step for tall webtoon
+    strips. Each image gets exactly one frame that is displayed for the full
+    duration of its narration TTS, keeping voice and image perfectly in sync.
+
+    Returns list of (frame_path, source_panel_index) tuples.
+    Resumable: reuses existing frames from the slices directory."""
+    out_dir = cfg.temp_slices_dir / chapter.tag
+    manifest_path = out_dir / "manifest.json"
+    if manifest_path.exists():
+        try:
+            data = json.loads(manifest_path.read_text())
+            frames = data["frames"]
+            sources = data.get("sources")
+            if sources and len(sources) == len(frames):
+                log.info("[%s] frames already exist (%d frames) — skipping", chapter.tag, len(frames))
+                return [(Path(f), s) for f, s in zip(frames, sources)]
+        except Exception:
+            pass
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    frame_data: List[tuple] = []
+
+    for panel_idx, panel_path in enumerate(chapter.panel_paths):
+        fp = out_dir / f"frame_{panel_idx:05d}.jpg"
+        if fp.exists():
+            frame_data.append((fp, panel_idx))
+            continue
+        frame = _compose_canvas_from_source(panel_path)
+        frame.save(fp, quality=92)
+        frame_data.append((fp, panel_idx))
+
+    manifest_path.write_text(json.dumps({
+        "frames": [str(f) for f, _ in frame_data],
+        "sources": [s for _, s in frame_data],
+    }, indent=2))
+    log.info("[%s] prepared %d frames (one per source panel)", chapter.tag, len(frame_data))
+    return frame_data
+
+
+def _compose_canvas_from_source(panel_path: Path):
+    """Load a source panel image and center it on a 1920x1080 canvas.
+    For tall webtoon strips, crops the center section directly from the
+    original resolution (avoids expensive full-width resize)."""
+    from PIL import Image
+
+    img = Image.open(panel_path).convert("RGB")
+    cw, ch = img.size
+
+    if ch / cw > 1.5:
+        # Tall strip: crop center section from ORIGINAL resolution,
+        # then resize only the crop to 1920x1080. This avoids
+        # creating a 1920x33000 intermediate image.
+        crop_h = int(cw * CANVAS_H / CANVAS_W)
+        crop_top = max(0, (ch - crop_h) // 2)
+        crop_bot = min(ch, crop_top + crop_h)
+        crop = img.crop((0, crop_top, cw, crop_bot))
+        fg = crop.resize((CANVAS_W, CANVAS_H), Image.LANCZOS)
+    else:
+        # Normal aspect ratio: fit within canvas.
+        fg_scale = min(CANVAS_W / cw, CANVAS_H / ch)
+        fw, fh = max(1, int(cw * fg_scale)), max(1, int(ch * fg_scale))
+        fg = img.resize((fw, fh), Image.LANCZOS)
+
+    # Solid black background.
+    canvas = Image.new("RGB", (CANVAS_W, CANVAS_H), (0, 0, 0))
+
+    # Center the image on canvas.
+    fx = (CANVAS_W - fg.width) // 2
+    fy = (CANVAS_H - fg.height) // 2
+    canvas.paste(fg, (fx, fy))
+
+    return canvas
+
+
+# ---------------------------------------------------------------------------
+# 2. UNIFORM CANVAS SLICING ENGINE (gutter-aware + inpainting)
+# ---------------------------------------------------------------------------
+
+# Inpainting toggle — disabled by default to avoid OOM on large webtoon strips.
+# The VLM narration focuses on describing the scene rather than reading dialogue,
+# which achieves a similar effect without the memory cost of CV2 inpainting.
+INPAINT_BUBBLES = False
+INPAINT_MIN_BUBBLE_AREA = 800   # px² — ignore tiny text fragments
+INPAINT_MAX_BUBBLE_AREA = 150000  # px² — ignore huge regions (whole panels)
+
+
+def _detect_panel_gutters(img_gray, y_offset: int = 0) -> List[int]:
+    """Detect horizontal gutter lines (panel separators) in a webtoon strip.
+
+    Uses a multi-signal approach:
+      1. Row variance (flat/uniform rows = gutters)
+      2. Row brightness (white gaps have high mean, black borders have low mean)
+      3. Full-width check — a real gutter must be uniform across the ENTIRE
+         row width, not just part of it. This prevents false cuts through
+         panels that have a white region on one side (e.g. sky/speech bubbles).
+
+    A row is classified as gutter if it satisfies EITHER:
+      - Low variance (uniform color) AND (very bright OR very dark)
+      - Very low variance (nearly uniform regardless of color)
+    AND the row is uniformly gutter-like across ≥80% of its width (so we
+    don't cut through a panel that happens to have a flat region).
+
+    Returns sorted list of ABSOLUTE y-coordinates for cuts.
+    """
+
+    h, w = img_gray.shape
+    if h < 10:
+        return []
+
+    row_means = np.mean(img_gray, axis=1).astype(np.float32)
+    row_stds = np.std(img_gray, axis=1).astype(np.float32)
+
+    # Smooth both signals to avoid single-row noise.
+    kernel = max(3, min(7, h // 300))
+    row_means = cv2.blur(row_means.reshape(-1, 1), (kernel, 1)).flatten()
+    row_stds = cv2.blur(row_stds.reshape(-1, 1), (kernel, 1)).flatten()
+
+    # Classify each row as gutter or not.
+    is_bright_gutter = (row_stds < 12) & (row_means > 200)
+    is_dark_gutter = (row_stds < 12) & (row_means < 60)
+    is_flat_gutter = row_stds < 3
+    is_gutter = is_bright_gutter | is_dark_gutter | is_flat_gutter
+
+    # FULL-WIDTH VALIDATION: a real gutter must be uniform across the whole row.
+    n_slices = 5
+    slice_w = max(1, w // n_slices)
+    for i in range(h):
+        if not is_gutter[i]:
+            continue
+        gutter_slices = 0
+        for s in range(n_slices):
+            x0 = s * slice_w
+            x1 = min(w, (s + 1) * slice_w)
+            sl = img_gray[i, x0:x1]
+            sl_mean = float(np.mean(sl))
+            sl_std = float(np.std(sl))
+            if (sl_std < 12 and (sl_mean > 200 or sl_mean < 60)) or sl_std < 3:
+                gutter_slices += 1
+        if gutter_slices < 4:
+            is_gutter[i] = False
+
+    # Extract gutter runs (consecutive gutter rows).
+    cuts: List[int] = []
+    run_start = None
+    min_gutter_height = max(4, h // 400)
+    min_panel_height = max(40, h // 80)
+
+    for i, g in enumerate(is_gutter):
+        if g and run_start is None:
+            run_start = i
+        elif not g and run_start is not None:
+            if i - run_start >= min_gutter_height:
+                cut_pos = y_offset + (run_start + i) // 2
+                if not cuts or (cut_pos - cuts[-1]) >= min_panel_height:
+                    cuts.append(cut_pos)
+            run_start = None
+    if run_start is not None and h - run_start >= min_gutter_height:
+        cut_pos = y_offset + (run_start + h) // 2
+        if not cuts or (cut_pos - cuts[-1]) >= min_panel_height:
+            cuts.append(cut_pos)
+
+    return cuts
+
+
+def _detect_vertical_gutters(img_gray) -> List[int]:
+    """Detect vertical gutter lines (column separators) in a manga row.
+
+    Scans columns for uniform vertical bands — blank white gaps or thin
+    black borders between side-by-side panels. Returns sorted list of
+    absolute x-coordinates where the row should be cut vertically.
+    """
+
+    h, w = img_gray.shape
+    if w < 10:
+        return []
+
+    col_stds = np.std(img_gray, axis=0).astype(np.float32)
+    # Smooth to avoid single-column noise spikes.
+    kernel = max(1, min(5, w // 500))
+    if kernel > 1:
+        col_stds = cv2.blur(col_stds.reshape(1, -1), (1, kernel)).flatten()
+
+    # Adaptive threshold for vertical gutters.
+    gutter_threshold = float(min(14.0, max(6.0, np.percentile(col_stds, 20))))
+    is_gutter = col_stds < gutter_threshold
+
+    cuts: List[int] = []
+    run_start = None
+    min_gutter_width = max(2, w // 800)
+    for i, g in enumerate(is_gutter):
+        if g and run_start is None:
+            run_start = i
+        elif not g and run_start is not None:
+            if i - run_start >= min_gutter_width:
+                cuts.append((run_start + i) // 2)
+            run_start = None
+    if run_start is not None and w - run_start >= min_gutter_width:
+        cuts.append((run_start + w) // 2)
+    return cuts
+
+
+def _detect_panels_connected_components(img_gray) -> List[tuple]:
+    """Detect panels by finding GUTTER BANDS (horizontal white gaps) between panels.
+
+    This is the PRIMARY panel detection method. Instead of trying to detect
+    panel content (which fails on light/zoomed panels with sparse content),
+    it detects the GUTTERS between panels — bands of rows that are nearly all
+    white. Everything between two gutter bands is a panel, regardless of how
+    much content it has.
+
+    This approach is far more robust than content-based detection because:
+    - It catches panels with light/white backgrounds and sparse content
+      (e.g. a character on white background) that content-thresholding misses
+    - It doesn't over-segment dense artwork (a splash panel stays as one panel)
+    - It naturally handles zoomed panels, text-only panels, and mixed layouts
+
+    Algorithm:
+      1. For each row, compute the percentage of "white" pixels (>240)
+      2. A row is "gutter-like" if >85% of its pixels are white
+      3. Smooth the signal to avoid single-row noise
+      4. Find gutter BANDS = consecutive runs of gutter-like rows (min height)
+      5. Panels = regions between gutter band midpoints
+      6. Filter: skip regions that are too small or have no content (all white)
+      7. Merge: merge adjacent small panels if the gutter between them is weak
+
+    Returns list of (x1, y1, x2, y2) tuples sorted by y position.
+    """
+    h, w = img_gray.shape
+    if h < 10 or w < 10:
+        return [(0, 0, w, h)]
+
+    # Step 1: compute dark pixel percentage per row.
+    # A real gutter row has almost NO dark pixels (< 0.5% of width).
+    # Text rows have dark character pixels (typically 2-10% dark).
+    # This is far more reliable than white% because text on white background
+    # can have >95% white pixels but still has dark character pixels that
+    # distinguish it from a real gutter.
+    dark_pct_per_row = np.sum(img_gray < 180, axis=1) / w * 100
+
+    # Step 2: classify gutter rows (< 0.5% dark pixels = almost no content)
+    is_gutter_row = dark_pct_per_row < 0.5
+
+    # Step 3: smooth to avoid single-row noise
+    kernel = max(3, min(7, h // 300))
+    is_gutter_row = cv2.blur(is_gutter_row.astype(np.float32).reshape(-1, 1), (kernel, 1)).flatten() > 0.5
+
+    # Step 4: find gutter bands (consecutive gutter rows).
+    # Require min height of 15px — real panel gutters are 15+px tall.
+    # Thin white lines (1-10px) inside panels are NOT real gutters.
+    gutter_bands = []  # (start, end, strength, height)
+    run_start = None
+    min_band_h = max(15, h // 300)
+    for i, g in enumerate(is_gutter_row):
+        if g and run_start is None:
+            run_start = i
+        elif not g and run_start is not None:
+            if i - run_start >= min_band_h:
+                band_region = dark_pct_per_row[run_start:i]
+                strength = float(np.max(band_region))  # max dark% in band (lower = whiter)
+                gutter_bands.append((run_start, i, strength, i - run_start))
+            run_start = None
+    if run_start is not None and h - run_start >= min_band_h:
+        band_region = dark_pct_per_row[run_start:h]
+        strength = float(np.max(band_region))
+        gutter_bands.append((run_start, h, strength, h - run_start))
+
+    # Step 5: place cut points at the row with MINIMUM dark pixels within
+    # each band, plus a 3px safety margin toward the center of the band.
+    # This ensures the cut is at the absolute safest position AND has a
+    # small buffer of pure white rows so anti-aliased text pixels from
+    # adjacent panels don't bleed into the cut edge.
+    cut_points = []
+    for s, e, _, _ in gutter_bands:
+        band_dark = dark_pct_per_row[s:e]
+        min_idx = int(np.argmin(band_dark))
+        # Push 3px toward the center of the band for a safety margin
+        band_mid = (e - s) // 2
+        if min_idx < band_mid:
+            min_idx = min(min_idx + 3, e - s - 1)
+        else:
+            min_idx = max(min_idx - 3, 0)
+        cut_points.append(s + min_idx)
+    boundaries = [0] + cut_points + [h]
+    raw_panels = []
+    min_panel_h = max(30, h // 100)
+    for i in range(len(boundaries) - 1):
+        top, bot = boundaries[i], boundaries[i + 1]
+        if bot - top >= min_panel_h:
+            raw_panels.append((0, top, w, bot))
+
+    # Step 6: filter out all-white regions (no content)
+    content_panels = []
+    for (x1, y1, x2, y2) in raw_panels:
+        region = img_gray[y1:y2, x1:x2]
+        if float(np.std(region)) > 8:  # has real content
+            content_panels.append((x1, y1, x2, y2))
+
+    # Step 7: merge adjacent small panels if the gutter between them is weak
+    # (high dark% = not a strong separator). This merges text-line fragments
+    # that were split by thin white lines within a single panel.
+    # Note: strength is now max dark% in the band (lower = whiter = stronger).
+    merged = []
+    for i, (x1, y1, x2, y2) in enumerate(content_panels):
+        if i == 0:
+            merged.append([x1, y1, x2, y2])
+            continue
+        prev = merged[-1]
+        prev_h = prev[3] - prev[1]
+        this_h = y2 - y1
+        # Merge if BOTH panels are small AND the gutter between them is weak
+        if this_h < 150 and prev_h < 200:
+            # Find the gutter band between prev and this
+            for (gs, ge, gstr, gh) in gutter_bands:
+                gmid = (gs + ge) // 2
+                if prev[1] < gmid < y1 and gstr > 0.3:
+                    # Weak gutter (dark% > 0.3 = has some content) — merge
+                    prev[2] = x2
+                    prev[3] = y2
+                    break
+            else:
+                merged.append([x1, y1, x2, y2])
+        else:
+            merged.append([x1, y1, x2, y2])
+
+    panels = [(p[0], p[1], p[2], p[3]) for p in merged if (p[3] - p[1]) >= min_panel_h]
+
+    if not panels:
+        return [(0, 0, w, h)]
+
+    return panels
+
+
+def _subsplit_tall_panel(img_gray, x1, y1, x2, y2) -> List[tuple]:
+    """Sub-split a very tall panel (aspect > 2.5) into smaller frames using
+    row-scan gutter detection within the sub-region.
+
+    Returns list of (x1, y1, x2, y2) sub-regions. If no internal gutters are
+    found, returns the original region unchanged.
+    """
+    sub_gray = img_gray[y1:y2, x1:x2]
+    sh, sw = sub_gray.shape
+    if sh < 100:
+        return [(x1, y1, x2, y2)]
+
+    row_means = np.mean(sub_gray, axis=1).astype(np.float32)
+    row_stds = np.std(sub_gray, axis=1).astype(np.float32)
+    k = max(3, min(7, sh // 300))
+    row_means = cv2.blur(row_means.reshape(-1, 1), (k, 1)).flatten()
+    row_stds = cv2.blur(row_stds.reshape(-1, 1), (k, 1)).flatten()
+
+    is_g = ((row_stds < 12) & ((row_means > 200) | (row_means < 60))) | (row_stds < 3)
+    # Full-width check
+    sl_w = max(1, sw // 5)
+    for i in range(sh):
+        if not is_g[i]:
+            continue
+        gs = 0
+        for s in range(5):
+            sl = sub_gray[i, s * sl_w:min(sw, (s + 1) * sl_w)]
+            if (np.std(sl) < 12 and (np.mean(sl) > 200 or np.mean(sl) < 60)) or np.std(sl) < 3:
+                gs += 1
+        if gs < 4:
+            is_g[i] = False
+
+    cuts = []
+    rs = None
+    min_gh = max(4, sh // 400)
+    min_ph = max(50, sh // 8)
+    for i, g in enumerate(is_g):
+        if g and rs is None:
+            rs = i
+        elif not g and rs is not None:
+            if i - rs >= min_gh:
+                cp = (rs + i) // 2
+                if not cuts or (cp - cuts[-1]) >= min_ph:
+                    cuts.append(cp)
+            rs = None
+    if rs is not None and sh - rs >= min_gh:
+        cp = (rs + sh) // 2
+        if not cuts or (cp - cuts[-1]) >= min_ph:
+            cuts.append(cp)
+
+    if not cuts:
+        return [(x1, y1, x2, y2)]
+
+    boundaries = [0] + cuts + [sh]
+    subs = []
+    for j in range(len(boundaries) - 1):
+        sub_h = boundaries[j + 1] - boundaries[j]
+        if sub_h >= 50:
+            subs.append((x1, y1 + boundaries[j], x2, y1 + boundaries[j + 1]))
+    return subs if subs else [(x1, y1, x2, y2)]
+
+
+def _split_into_panel_segments(img_gray, max_segment_height: int) -> List[tuple]:
+    """Return a list of (top, bottom) panel boundaries for a webtoon strip.
+
+    DEPRECATED — kept for backward compat. The new slice_chapter_panels uses
+    _detect_panels_connected_components directly, which returns full (x1,y1,x2,y2)
+    bounding boxes instead of just (top, bottom) row bands.
+    """
+    h, w = img_gray.shape
+    gutter_cuts = _detect_panel_gutters(img_gray)
+    boundaries = [0] + gutter_cuts + [h]
+    segments = []
+    for i in range(len(boundaries) - 1):
+        top, bot = boundaries[i], boundaries[i + 1]
+        if bot - top < 50:
+            continue
+        segments.append((top, bot))
+    if not segments:
+        segments = [(0, h)]
+
+    refined = _refine_segments(img_gray, segments, max_segment_height, depth=0)
+    return refined
+
+
+def _refine_segments(img_gray, segments: List[tuple], max_height: int, depth: int) -> List[tuple]:
+    """Re-scan oversized segments with progressively relaxed thresholds."""
+
+    if depth >= 2:  # Max 2 re-scan passes
+        return segments
+
+    refined: List[tuple] = []
+    for top, bot in segments:
+        seg_h = bot - top
+        if seg_h <= max_height * 1.5:
+            refined.append((top, bot))
+            continue
+
+        # Re-scan this sub-region with relaxed thresholds.
+        sub = img_gray[top:bot, :]
+        sub_stds = np.std(sub, axis=1).astype(np.float32)
+        sub_means = np.mean(sub, axis=1).astype(np.float32)
+
+        kernel = max(3, min(7, seg_h // 300))
+        sub_stds = cv2.blur(sub_stds.reshape(-1, 1), (kernel, 1)).flatten()
+        sub_means = cv2.blur(sub_means.reshape(-1, 1), (kernel, 1)).flatten()
+
+        # Progressively relax the thresholds with each pass.
+        if depth == 0:
+            std_thresh = float(min(18.0, max(8.0, np.percentile(sub_stds, 25))))
+        else:
+            std_thresh = float(min(25.0, max(12.0, np.percentile(sub_stds, 35))))
+
+        is_gutter = sub_stds < std_thresh
+        sub_cuts: List[int] = []
+        run_start = None
+        min_h = max(2, seg_h // 600)
+        for i, g in enumerate(is_gutter):
+            if g and run_start is None:
+                run_start = i
+            elif not g and run_start is not None:
+                if i - run_start >= min_h:
+                    sub_cuts.append((run_start + i) // 2)
+                run_start = None
+        if run_start is not None and seg_h - run_start >= min_h:
+            sub_cuts.append((run_start + seg_h) // 2)
+
+        if sub_cuts:
+            sub_boundaries = [0] + sub_cuts + [seg_h]
+            new_segs = []
+            for j in range(len(sub_boundaries) - 1):
+                st, sb = sub_boundaries[j], sub_boundaries[j + 1]
+                if sb - st >= 50:
+                    new_segs.append((top + st, top + sb))
+            if new_segs:
+                refined.extend(_refine_segments(img_gray, new_segs, max_height, depth + 1))
+                continue
+        refined.append((top, bot))
+
+    return refined
+
+
+def _inpaint_bubbles(img) -> "object":
+    """Detect and inpaint speech bubbles/text in a panel image.
+
+    Uses OpenCV to find text regions (light blobs with borders), then fills
+    them with surrounding pixels via OpenCV's inpainting (Telea algorithm —
+    a free, fast content-aware fill that reconstructs background art).
+    """
+    from PIL import Image
+
+    arr = np.array(img)  # RGB
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+
+    # Detect text/bubbles: white-ish blobs (speech bubbles are usually white).
+    # Threshold to find bright regions.
+    _, bright = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
+    # Morphological close to merge nearby text into blob masks.
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+    bright = cv2.morphologyEx(bright, cv2.MORPH_CLOSE, kernel)
+    # Find contours that look like text/bubbles (area in range).
+    contours, _ = cv2.findContours(bright, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    mask = np.zeros(gray.shape, dtype=np.uint8)
+    for c in contours:
+        area = cv2.contourArea(c)
+        if INPAINT_MIN_BUBBLE_AREA < area < INPAINT_MAX_BUBBLE_AREA:
+            cv2.drawContours(mask, [c], -1, 255, -1)
+            # Dilate the mask slightly so inpainting covers edges cleanly.
+    if mask.any():
+        mask = cv2.dilate(mask, kernel, iterations=2)
+        # Inpaint using the Telea algorithm (fast, free, content-aware).
+        arr = cv2.inpaint(arr, mask, 5, cv2.INPAINT_TELEA)
+    return Image.fromarray(arr)
+
+
+def _is_blank_crop(arr_gray) -> bool:
+    """Check if a cropped panel image is blank (no real content).
+
+    A panel is considered blank if it's nearly uniform — e.g. pure white,
+    pure black, or a flat color with no artwork. We use pixel standard
+    deviation: a real manga/manhwa panel has lots of detail (lines, shading,
+    text) so its std is high (>15). Blank panels have std < 8.
+
+    Also catches near-white panels (mean > 245 AND std < 15) which are the
+    most common blank type in webtoons (white gutters caught as "panels").
+    """
+    if arr_gray is None or arr_gray.size == 0:
+        return True
+    mean_val = float(np.mean(arr_gray))
+    std_val = float(np.std(arr_gray))
+    # Very low std = uniform/blank regardless of color.
+    if std_val < 8.0:
+        return True
+    # Near-white with low detail = blank white panel.
+    if mean_val > 245.0 and std_val < 15.0:
+        return True
+    return False
+
+
+def _is_lines_only_crop(arr_gray) -> bool:
+    """Check if a cropped panel contains ONLY lines/borders (no text, no art).
+
+    These are panels that have some content (so they pass the blank check) but
+    the content is just thin lines, borders, dividers, or frame outlines — no
+    actual text or artwork. These should be removed from the video because they
+    add no narrative value.
+
+    Detection method: analyze connected components of dark pixels.
+    - TEXT = many small, non-elongated components (characters)
+    - ART = large components with high pixel area (artwork, shading)
+    - LINES = medium components that are very elongated (high aspect ratio)
+
+    A panel is "lines only" if it has NO text-like components AND NO art-like
+    components, but DOES have line-like components.
+
+    Returns True if the panel should be REMOVED (lines/borders only).
+    """
+    if arr_gray is None or arr_gray.size == 0:
+        return False  # let _is_blank_crop handle empty
+
+    h, w = arr_gray.shape
+    if h < 5 or w < 5:
+        return False
+
+    # Threshold to find dark pixels (content)
+    _, binary = cv2.threshold(arr_gray, 180, 255, cv2.THRESH_BINARY_INV)
+    n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+
+    if n_labels <= 1:
+        return False  # no content at all (blank check handles this)
+
+    text_components = 0
+    art_components = 0
+    line_components = 0
+
+    for i in range(1, n_labels):
+        area = int(stats[i, cv2.CC_STAT_AREA])
+        cw = int(stats[i, cv2.CC_STAT_WIDTH])
+        ch = int(stats[i, cv2.CC_STAT_HEIGHT])
+        min_dim = max(1, min(cw, ch))
+        max_dim = max(cw, ch)
+        aspect = max_dim / min_dim
+
+        # Skip tiny noise (< 5px)
+        if area < 5:
+            continue
+
+        # TEXT-like: small area, low aspect ratio (roughly square = characters)
+        # Characters are typically 5-500px and aspect < 3.5
+        if area < 600 and aspect < 3.5:
+            text_components += 1
+        # ART-like: large area (big artwork blobs, shading regions)
+        elif area > 1500:
+            art_components += 1
+        # LINE-like: very elongated (aspect > 4) — borders, dividers, frame outlines
+        elif aspect > 4.0:
+            line_components += 1
+        else:
+            # Medium, non-elongated — could be text or small art, count as text
+            if area < 600:
+                text_components += 1
+
+    # The panel is "lines only" if it has line-like components but
+    # NO text and NO art. We require at least 1 line component to classify
+    # as lines-only (otherwise it's just a sparse panel).
+    has_text = text_components >= 8  # need at least 8 char-like blobs for real text
+    has_art = art_components >= 1
+    has_lines = line_components >= 1
+
+    return has_lines and not has_text and not has_art
+
+
+def _should_skip_panel(arr_gray) -> bool:
+    """Determine if a panel should be skipped (not included in the video).
+
+    A panel is skipped if:
+    1. It's blank (all-white, uniform, no content) — _is_blank_crop
+    2. It contains ONLY lines/borders (no text, no art) — _is_lines_only_crop
+
+    Panels that ARE kept:
+    - Panels with text (speech bubbles, captions, narration boxes)
+    - Panels with artwork (characters, backgrounds, action scenes)
+    - Panels with both text and art
+    - Panels with text + border lines (the borders don't disqualify them)
+    """
+    if _is_blank_crop(arr_gray):
+        return True
+    if _is_lines_only_crop(arr_gray):
+        return True
+    return False
+
+
+def _trim_white_borders(arr_gray, arr_rgb, margin: int = 2):
+    """Trim white/uniform borders from a cropped panel.
+
+    Scans from each edge inward and crops away rows/columns that are
+    nearly white (mean > 240, std < 10). Returns (trimmed_rgb, trimmed_gray)
+    or the original arrays if no trimming was needed. Always keeps at least
+    `margin` pixels of border so we don't clip artwork.
+
+    This makes panels fill the frame better (no wasted white space around
+    the artwork) and improves the VLM's ability to read text.
+    """
+    h, w = arr_gray.shape
+    if h < 20 or w < 20:
+        return arr_rgb, arr_gray
+
+    def is_white_row(y):
+        row = arr_gray[y, :]
+        return float(np.mean(row)) > 240 and float(np.std(row)) < 10
+
+    def is_white_col(x):
+        col = arr_gray[:, x]
+        return float(np.mean(col)) > 240 and float(np.std(col)) < 10
+
+    # Trim top
+    top = 0
+    while top < h - margin - 1 and is_white_row(top):
+        top += 1
+    top = max(0, top - margin)
+    # Trim bottom
+    bot = h - 1
+    while bot > top + margin and is_white_row(bot):
+        bot -= 1
+    bot = min(h - 1, bot + margin)
+    # Trim left
+    left = 0
+    while left < w - margin - 1 and is_white_col(left):
+        left += 1
+    left = max(0, left - margin)
+    # Trim right
+    right = w - 1
+    while right > left + margin and is_white_col(right):
+        right -= 1
+    right = min(w - 1, right + margin)
+
+    # Only trim if we're removing a meaningful amount (≥5% from any side).
+    min_trim = max(4, h // 20)
+    min_trim_w = max(4, w // 20)
+    if top < min_trim and (h - 1 - bot) < min_trim and left < min_trim_w and (w - 1 - right) < min_trim_w:
+        return arr_rgb, arr_gray
+
+    trimmed_rgb = arr_rgb[top:bot + 1, left:right + 1]
+    trimmed_gray = arr_gray[top:bot + 1, left:right + 1]
+    if trimmed_rgb.shape[0] < 20 or trimmed_rgb.shape[1] < 20:
+        return arr_rgb, arr_gray
+    return trimmed_rgb, trimmed_gray
+
+
+def _detect_panels_yolo(img_gray) -> List[tuple]:
+    """Detect panels using YOLOv5/v8 comic panel detection model.
+
+    Uses a pretrained YOLO model (mosesb/best-comic-panel-detection) that
+    was trained specifically on comic/manga panels. This is more accurate
+    than CV-based detection for pages with complex layouts, splash panels,
+    and non-rectangular panel shapes.
+
+    Falls back gracefully if the model or torch is unavailable.
+
+    Returns list of (x, y, w, h) tuples sorted by y position.
+    """
+    try:
+        from ultralytics import YOLO
+    except ImportError:
+        return []
+
+    model_path = str(Path(__file__).parent / "models" / "comic-panel-yolo" / "best.pt")
+    if not Path(model_path).exists():
+        return []
+
+    try:
+        model = YOLO(model_path)
+        # Convert grayscale to 3-channel for YOLO (it expects BGR)
+        if img_gray.ndim == 2:
+            img_bgr = cv2.cvtColor(img_gray, cv2.COLOR_GRAY2BGR)
+        else:
+            img_bgr = img_gray
+
+        results = model.predict(img_bgr, conf=0.25, iou=0.45, verbose=False)
+        if not results or results[0].boxes is None:
+            return []
+
+        h, w = img_gray.shape[:2]
+        page_area = w * h
+        panels = []
+        for box in results[0].boxes:
+            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            bw, bh = x2 - x1, y2 - y1
+            area = bw * bh
+            # Filter: min 2% area, max 98% area (looser than CV)
+            if area < 0.02 * page_area or area > 0.98 * page_area:
+                continue
+            # Expand by 10px margin to avoid tight crops that clip artwork
+            margin = 10
+            x1 = max(0, x1 - margin)
+            y1 = max(0, y1 - margin)
+            bw = min(w - x1, bw + 2 * margin)
+            bh = min(h - y1, bh + 2 * margin)
+            panels.append((x1, y1, bw, bh))
+
+        # NMS to remove near-duplicates (keep insets)
+        panels = _suppress_nested(panels, iou_thresh=0.65)
+        panels.sort(key=lambda p: (p[1], p[0]))
+        return panels
+    except Exception as e:
+        log.warning("YOLO panel detection failed: %s", e)
+        return []
+
+
+def _detect_panels_auto(img_gray) -> List[tuple]:
+    """Auto-mode panel detection: run YOLO first, fall back to CV if weak.
+
+    This is the cbxy "auto" engine approach:
+    1. Run YOLO (most accurate for complex layouts)
+    2. If YOLO returns 0 panels or 1 panel covering ≥70% of page (weak),
+       run CV detection and use whichever produced more panels.
+    3. If CV also looks weak, use the whole page as one panel.
+
+    Returns list of (x, y, w, h) tuples sorted by y position.
+    """
+    h, w = img_gray.shape
+    page_area = w * h
+
+    # Try YOLO first
+    yolo_panels = _detect_panels_yolo(img_gray)
+
+    # Check if YOLO looks weak
+    yolo_weak = (
+        len(yolo_panels) == 0
+        or (len(yolo_panels) == 1 and yolo_panels[0][2] * yolo_panels[0][3] >= 0.70 * page_area)
+    )
+
+    if not yolo_weak and len(yolo_panels) >= 2:
+        # YOLO found multiple panels — use it
+        log.debug("YOLO detected %d panels (strong)", len(yolo_panels))
+        return yolo_panels
+
+    # YOLO was weak — try CV
+    cv_panels = _detect_panels_contour(img_gray)
+
+    # Use whichever found more panels
+    if len(cv_panels) > len(yolo_panels):
+        log.debug("CV fallback: %d panels (YOLO found %d)", len(cv_panels), len(yolo_panels))
+        return cv_panels
+
+    # Both weak — use whole page
+    if not yolo_panels and not cv_panels:
+        return [(0, 0, w, h)]
+
+    return yolo_panels if yolo_panels else cv_panels
+
+
+def _suppress_nested(panels: List[tuple], iou_thresh: float = 0.55) -> List[tuple]:
+    """Drop boxes mostly contained in a larger panel (from cbxy).
+
+    Greedy by descending area: a candidate is dropped if >=55% of its
+    own area is contained in an already-kept larger panel. This removes
+    speech bubbles and small insets that survived the area filter.
+    """
+    if not panels:
+        return panels
+
+    kept: List[tuple] = []
+    by_area = sorted(panels, key=lambda p: p[2] * p[3], reverse=True)
+    for candidate in by_area:
+        cx, cy, cw, ch = candidate
+        cx2, cy2 = cx + cw, cy + ch
+        is_nested = False
+        for kept_panel in kept:
+            kx, ky, kw, kh = kept_panel
+            kx2, ky2 = kx + kw, ky + kh
+            # Compute containment: fraction of candidate inside kept_panel
+            ix1 = max(cx, kx)
+            iy1 = max(cy, ky)
+            ix2 = min(cx2, kx2)
+            iy2 = min(cy2, ky2)
+            if ix2 <= ix1 or iy2 <= iy1:
+                continue
+            inter = (ix2 - ix1) * (iy2 - iy1)
+            candidate_area = max(cw * ch, 1)
+            if inter / candidate_area >= iou_thresh:
+                is_nested = True
+                break
+        if not is_nested:
+            kept.append(candidate)
+    return kept
+
+
+def _detect_panels_contour(img_gray) -> List[tuple]:
+    """Detect panels using improved contour-based detection (CV fallback).
+
+    This is the CV fallback used when YOLO is unavailable or returns weak
+    results. Combines techniques from comic-manga-narrator + cbxy.
+    """
+    h, w = img_gray.shape
+    page_area = w * h
+
+    # Step 1: threshold (gutters are white ≥200, panels are dark <200)
+    _, binary = cv2.threshold(img_gray, 200, 255, cv2.THRESH_BINARY)
+
+    # Step 2: morphological close to bridge text/art gaps within panels
+    # Invert so panels are white blobs on black background
+    panels_mask = cv2.bitwise_not(binary)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    panels_mask = cv2.morphologyEx(panels_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+    # Step 3: flood-fill from 4 corners to mark page background (cbxy technique)
+    # This prevents the entire page from being detected as one giant panel
+    gutters = binary.copy()
+    ff_mask = np.zeros((h + 2, w + 2), np.uint8)
+    for seed in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]:
+        if gutters[seed[1], seed[0]] > 0:
+            cv2.floodFill(gutters, ff_mask, seed, 128)
+
+    # Step 4: subtract background
+    background = gutters == 128
+    content = panels_mask.copy()
+    content[background] = 0
+
+    # Step 5: find external contours
+    contours, _ = cv2.findContours(content, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Step 6-7: filter by area, dimensions, and aspect ratio
+    panels = []
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area < 0.03 * page_area or area > 0.85 * page_area:
+            continue
+        x, y, bw, bh = cv2.boundingRect(cnt)
+        # Reject thin slivers (cbxy thresholds)
+        if bw < 0.08 * w or bh < 0.05 * h:
+            continue
+        ar = bw / max(bh, 1)
+        if ar > 8.0 or ar < 0.15:
+            continue
+        # Small margin expansion
+        margin = 5
+        x = max(0, x - margin)
+        y = max(0, y - margin)
+        bw = min(w - x, bw + 2 * margin)
+        bh = min(h - y, bh + 2 * margin)
+        panels.append((x, y, bw, bh))
+
+    # Step 8: nested suppression (cbxy technique)
+    panels = _suppress_nested(panels, iou_thresh=0.55)
+
+    # Step 9: weak detection fallback (cbxy heuristic)
+    # If 0 panels or 1 panel covering ≥70% of page, use whole page
+    if not panels:
+        return [(0, 0, w, h)]
+    if len(panels) == 1 and panels[0][2] * panels[0][3] >= 0.70 * page_area:
+        return [(0, 0, w, h)]
+
+    # Sort by y position (top to bottom), then x (left to right)
+    panels.sort(key=lambda p: (p[1], p[0]))
+    return panels
+
+
+def slice_chapter_panels(cfg: PipelineConfig, chapter: Chapter) -> List[tuple]:
+    """
+    Slice each source image into individual panel frames using contour-based,
+    gutter-aware panel detection.
+
+    This uses the approach from the comic-manga-narrator project:
+    1. Threshold to binary (inverted: gutters are white, panels are dark)
+    2. Dilate to close small text/art gaps within panels
+    3. Find external contours → bounding rectangles
+    4. Filter by minimum area, reject speech bubbles and slivers
+    5. Safe fallback: if detection covers < 50% of image, use whole page
+
+    Each detected panel is composited onto a 1920x1080 canvas with
+    blurred background fill (contain-fit).
+
+    Returns list of (frame_path, source_panel_index) tuples in order.
+    Resumable: if the chapter's slice folder has a manifest, reuse it.
+    """
+    from PIL import Image, ImageFilter
+
+    out_dir = cfg.temp_slices_dir / chapter.tag
+    manifest_path = out_dir / "manifest.json"
+    if manifest_path.exists():
+        try:
+            data = json.loads(manifest_path.read_text())
+            frames = data["frames"]
+            sources = data.get("sources")
+            if sources and len(sources) == len(frames):
+                log.info("[%s] frames already exist (%d frames) — skipping", chapter.tag, len(frames))
+                return [(Path(f), s) for f, s in zip(frames, sources)]
+        except Exception:
+            pass
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    frame_data: List[tuple] = []
+    frame_counter = 0
+    total_blank_skipped = 0
+
+    for panel_idx, panel_path in enumerate(chapter.panel_paths):
+        with Image.open(panel_path) as img:
+            img = img.convert("RGB")
+            w, h = img.size
+            gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
+
+            # Auto-mode panel detection: YOLO first, CV fallback if weak
+            panels = _detect_panels_auto(gray)
+            log.debug("[%s] img %d: detected %d panel(s)", chapter.tag, panel_idx, len(panels))
+
+            for (px, py, pw, ph) in panels:
+                if ph < 50 or pw < 50:
+                    continue
+
+                # Each detected panel = ONE frame. No sub-splitting.
+                # Tall panels are shown complete using cover-fit (fill the
+                # 16:9 canvas completely by cropping the excess sides).
+                # This means a tall character panel stays as ONE image —
+                # the character might appear smaller but the full panel is
+                # visible, not chopped into pieces.
+                crop = img.crop((px, py, px + pw, py + ph))
+                crop_arr = np.array(crop)
+                crop_gray = cv2.cvtColor(crop_arr, cv2.COLOR_RGB2GRAY)
+
+                # Skip blank panels
+                if _is_blank_crop(crop_gray):
+                    total_blank_skipped += 1
+                    log.debug("[%s] img %d: skipping blank panel", chapter.tag, panel_idx)
+                    continue
+
+                # Composite onto 1920x1080 canvas with solid black background
+                from PIL import Image as PILImage
+                frame = _compose_canvas(PILImage.fromarray(crop_arr), ImageFilter=ImageFilter)
+                fp = out_dir / f"frame_{frame_counter:05d}.jpg"
+                frame.save(fp, quality=92)
+                frame_data.append((fp, panel_idx))
+                frame_counter += 1
+
+    if total_blank_skipped > 0:
+        log.info("[%s] skipped %d blank panel(s) during slicing", chapter.tag, total_blank_skipped)
+
+    manifest_path.write_text(json.dumps({
+        "frames": [str(f) for f, _ in frame_data],
+        "sources": [s for _, s in frame_data],
+    }, indent=2))
+    log.info("[%s] sliced %d source pages into %d frames (contour-based detection)",
+             chapter.tag, len(chapter.panel_paths), len(frame_data))
+    return frame_data
+
+
+def _compose_canvas(crop, ImageFilter):
+    """Composite `crop` onto a 1920x1080 canvas with solid black background.
+    Uses CONTAIN-FIT: scales the panel to fit ENTIRELY within the canvas,
+    showing the complete panel with black bars on the sides if needed.
+    This ensures NO content is ever cut off — the full panel (including
+    character head and feet) is always visible.
+    Also trims white borders from the source panel first."""
+    from PIL import Image
+    import numpy as np
+
+    # Trim white borders from the crop (manhwa pages have white margins)
+    crop_arr = np.array(crop)
+    gray = np.mean(crop_arr, axis=2)
+    h, w = gray.shape
+
+    non_white_rows = np.any(gray < 240, axis=1)
+    non_white_cols = np.any(gray < 240, axis=0)
+    rows = np.where(non_white_rows)[0]
+    cols = np.where(non_white_cols)[0]
+
+    if len(rows) > 10 and len(cols) > 10:
+        top = max(0, rows[0] - 5)
+        bot = min(h, rows[-1] + 5)
+        left = max(0, cols[0] - 5)
+        right = min(w, cols[-1] + 5)
+        if (bot - top) > 20 and (right - left) > 20:
+            crop = crop.crop((left, top, right, bot))
+
+    cw, ch = crop.size
+
+    # Solid black background.
+    canvas = Image.new("RGB", (CANVAS_W, CANVAS_H), (0, 0, 0))
+
+    # Contain-fit: scale to fit ENTIRELY within canvas, centered.
+    # Black bars on sides if the panel is taller than 16:9.
+    # This shows the COMPLETE panel — nothing is ever cut off.
+    fg_scale = min(CANVAS_W / cw, CANVAS_H / ch)
+    fw, fh = max(1, int(cw * fg_scale)), max(1, int(ch * fg_scale))
+    fg = crop.resize((fw, fh), Image.LANCZOS)
+    fx = (CANVAS_W - fw) // 2
+    fy = (CANVAS_H - fh) // 2
+    canvas.paste(fg, (fx, fy))
+
+    return canvas
+
+
+# ---------------------------------------------------------------------------
+# 3a. TRANSLATION (Groq, OpenAI-compatible endpoint)
+# ---------------------------------------------------------------------------
+
+TRANSLATE_SYSTEM_PROMPT = (
+    "You are a professional translator. If the given text is already in English, "
+    "return it completely unchanged. Otherwise, translate it into natural, fluent "
+    "English, preserving names, tone, and meaning as closely as possible. "
+    "Output ONLY the resulting English text — no preamble, no notes, no language labels."
+)
+
+
+def translate_text(cfg: PipelineConfig, text: str, cache_tag: str) -> str:
+    """Translate a block of text to English via Groq. Cached by cache_tag.
+    Any API error falls back to raw text so the pipeline never crashes."""
+    out_path = cfg.temp_scripts_dir / f"{cache_tag}_translated.txt"
+    if out_path.exists():
+        return out_path.read_text(encoding="utf-8")
+
+    if not text:
+        out_path.write_text("", encoding="utf-8")
+        return ""
+
+    if not cfg.translate or not cfg.groq_api_key:
+        log.info("[%s] translation disabled/no Groq key — using raw text as-is", cache_tag)
+        out_path.write_text(text, encoding="utf-8")
+        return text
+
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=cfg.groq_api_key, base_url=GROQ_BASE_URL)
+        resp = client.chat.completions.create(
+            model=cfg.groq_model,
+            messages=[
+                {"role": "system", "content": TRANSLATE_SYSTEM_PROMPT},
+                {"role": "user", "content": text},
+            ],
+            temperature=0.2,
+            timeout=60,
+        )
+        translated = resp.choices[0].message.content.strip()
+        if not translated:
+            translated = text
+        out_path.write_text(translated, encoding="utf-8")
+        log.info("[%s] translated text cached (%d chars)", cache_tag, len(translated))
+        return translated
+    except Exception as e:
+        log.warning("[%s] Groq translation failed (%s) — using raw text as-is", cache_tag, e)
+        out_path.write_text(text, encoding="utf-8")
+        return text
+
+
+def translate_chapter_text(cfg: PipelineConfig, chapter: Chapter) -> str:
+    """Backward-compat wrapper: translate the chapter-level summary text."""
+    return translate_text(cfg, chapter.summary_text, chapter.tag)
+
+
+# ---------------------------------------------------------------------------
+# 3b. SEAMLESS NARRATIVE REPHRASER (OpenAI)
+# ---------------------------------------------------------------------------
+
+FORBIDDEN_PATTERNS = [
+    r"\bchapter\s*\d*\b",
+    r"\bwelcome back\b",
+    r"\bin this (chapter|episode|part)\b",
+    r"\b(chapter|episode)\s*(title|recap)\b",
+    r"^\s*(chapter|episode)\s*\d+",
+]
+
+SYSTEM_PROMPT = (
+    "You are a dramatic audiobook narrator for a martial arts (Murim) fantasy story. "
+    "Convert the provided raw webtoon scene notes into a continuous, third-person "
+    "narrative script ready for text-to-speech.\n\n"
+    "Guidelines:\n"
+    "1. Never use meta-phrases like 'In this panel...', 'The character says...', "
+    "'we see', or 'this image shows'. Narrate as if the story is unfolding live.\n"
+    "2. Use active, visceral verbs — e.g. 'His qi flared with blue sparks' instead of "
+    "'He used energy'; 'She drove her blade through the beast's skull' instead of "
+    "'She attacked the monster'.\n"
+    "3. Maintain dramatic pacing — short, impactful sentences for action beats; "
+    "longer flowing sentences for atmosphere and emotion.\n"
+    "4. Convey emotion through body language and sensation: 'His jaw clenched', "
+    "'A cold sweat traced down her spine', 'The air itself seemed to shudder'.\n"
+    "5. Never mention chapter numbers, episode titles, or recap labels.\n"
+    "6. Output ONLY the narration text — no preamble, no headers, no markdown tags. "
+    "Pure prose ready to be spoken aloud.\n"
+    "7. If given previous context, continue the tone and momentum smoothly, as if "
+    "the story never paused."
+)
+
+
+def _strip_forbidden(text: str) -> str:
+    cleaned = text
+    for pat in FORBIDDEN_PATTERNS:
+        cleaned = re.sub(pat, "", cleaned, flags=re.IGNORECASE | re.MULTILINE)
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
+def rephrase_text(cfg: PipelineConfig, text: str, cache_tag: str, prev_tail: str) -> str:
+    """Call an LLM to rewrite (already-English) text into narration, chained with
+    prev_tail for continuity. Cached by cache_tag.
+    Provider selection (cfg.narration_provider):
+      - auto: prefer OpenAI if key set, else Groq if key set, else none
+      - openai/groq/none: explicit
+    Any API error falls back to the raw text verbatim."""
+    out_path = cfg.temp_scripts_dir / f"{cache_tag}.txt"
+    if out_path.exists():
+        log.info("[%s] narration script already exists — skipping rewrite", cache_tag)
+        return out_path.read_text(encoding="utf-8")
+
+    if not text:
+        log.warning("[%s] no text available, writing empty placeholder script", cache_tag)
+        out_path.write_text("", encoding="utf-8")
+        return ""
+
+    # Resolve which provider + key + base_url + model to actually use.
+    provider = cfg.narration_provider
+    openai_key = cfg.openai_api_key or os.environ.get("OPENAI_API_KEY")
+    if provider == "auto":
+        if openai_key:
+            provider = "openai"
+        elif cfg.groq_api_key:
+            provider = "groq"
+        else:
+            provider = "none"
+
+    if provider == "none":
+        log.info("[%s] narration provider=none — using text verbatim", cache_tag)
+        narration = _strip_forbidden(text)
+        out_path.write_text(narration, encoding="utf-8")
+        return narration
+
+    from openai import OpenAI
+
+    if provider == "openai":
+        if not openai_key:
+            log.error("[%s] narration provider=openai but no OPENAI_API_KEY — falling back to verbatim", cache_tag)
+            narration = _strip_forbidden(text)
+            out_path.write_text(narration, encoding="utf-8")
+            return narration
+        client = OpenAI(api_key=openai_key)
+        model = cfg.narration_model or cfg.openai_model
+    elif provider == "groq":
+        if not cfg.groq_api_key:
+            log.error("[%s] narration provider=groq but no GROQ_API_KEY — falling back to verbatim", cache_tag)
+            narration = _strip_forbidden(text)
+            out_path.write_text(narration, encoding="utf-8")
+            return narration
+        client = OpenAI(api_key=cfg.groq_api_key, base_url=GROQ_BASE_URL)
+        model = cfg.narration_model or cfg.groq_model
+    else:
+        narration = _strip_forbidden(text)
+        out_path.write_text(narration, encoding="utf-8")
+        return narration
+
+    user_prompt = text
+    if prev_tail:
+        user_prompt = (
+            f"[Continue smoothly from this prior narration excerpt, do not repeat it]\n"
+            f"...{prev_tail}\n\n"
+            f"[Raw material for the next portion of the story]\n{text}"
+        )
+
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.8,
+            timeout=90,
+        )
+        narration = resp.choices[0].message.content.strip()
+        if not narration:
+            narration = text
+        narration = _strip_forbidden(narration)
+    except Exception as e:
+        log.warning("[%s] narration API call failed via %s (%s) — using text verbatim", cache_tag, provider, e)
+        narration = _strip_forbidden(text)
+
+    out_path.write_text(narration, encoding="utf-8")
+    log.info("[%s] narration script written via %s/%s (%d chars)", cache_tag, provider, model, len(narration))
+    return narration
+
+
+def rephrase_chapter(cfg: PipelineConfig, chapter: Chapter, translated_text: str, prev_tail: str) -> str:
+    """Backward-compat wrapper: rephrase the chapter-level translated text."""
+    return rephrase_text(cfg, translated_text, chapter.tag, prev_tail)
+
+
+def last_sentences(text: str, n: int = 2) -> str:
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    sentences = [s for s in sentences if s]
+    return " ".join(sentences[-n:])
+
+
+def split_into_segments(text: str, n: int) -> List[str]:
+    """Split narration text into n roughly-equal word chunks, one per frame,
+    so every sliced image gets its own narration segment for tight sync.
+    If there are fewer words than frames, trailing frames get an empty
+    segment and simply hold silently for SILENT_FRAME_DURATION."""
+    words = text.split()
+    if n <= 0:
+        return []
+    if not words:
+        return [""] * n
+
+    segments: List[str] = []
+    idx = 0
+    total = len(words)
+    for i in range(n):
+        remaining_slots = n - i
+        remaining_words = total - idx
+        if remaining_words <= 0:
+            segments.append("")
+            continue
+        seg_len = max(1, round(remaining_words / remaining_slots))
+        segments.append(" ".join(words[idx: idx + seg_len]))
+        idx += seg_len
+    return segments
+
+
+# ---------------------------------------------------------------------------
+# 4. CONTINUOUS NEURAL TEXT-TO-SPEECH (edge-tts)
+# ---------------------------------------------------------------------------
+# NOTE: narration used to be synthesized one tiny word-chunk at a time (one
+# edge-tts call per sliced frame) and then concatenated. edge-tts inserts a
+# short natural pause at the start/end of every call it makes, so stitching
+# dozens of these clips back-to-back produced an audible "stop" after every
+# few words. Fixed by synthesizing each *panel's* full narration as a single
+# continuous speech clip, then using the actual word-level timestamps from
+# that one clip to divide it across frames — no re-synthesis, no seams.
+
+def get_audio_duration(path: Path) -> float:
+    """Probe an audio file's duration in seconds via ffprobe."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", str(path),
+        ],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        raise RuntimeError(f"ffprobe could not read duration of {path}: {result.stderr}")
+
+
+def _generate_silence(path: Path, duration: float) -> None:
+    run_ffmpeg(
+        [
+            "ffmpeg", "-y", "-f", "lavfi",
+            "-i", f"anullsrc=r={AUDIO_SAMPLE_RATE}:cl=mono",
+            "-t", f"{duration:.3f}",
+            "-b:a", AUDIO_BITRATE,
+            str(path),
+        ]
+    )
+
+
+def synthesize_segment_audio(cfg: PipelineConfig, chapter: Chapter, tag: str, text: str) -> Path:
+    """Generate ONE continuous narration clip (or silence) for a whole segment
+    (a single source panel, or the whole chapter in legacy mode). Resumable
+    per segment. This is the only place edge-tts is invoked per chapter run,
+    so the resulting speech has none of the artificial start/end pauses that
+    per-word synthesis introduced."""
+    seg_audio_dir = cfg.temp_audio_dir / chapter.tag
+    seg_audio_dir.mkdir(parents=True, exist_ok=True)
+    final_path = seg_audio_dir / f"{tag}.mp3"
+    if final_path.exists():
+        return final_path
+
+    text = text.strip()
+    if not text:
+        _generate_silence(final_path, SILENT_FRAME_DURATION)
+        return final_path
+
+    import asyncio
+    import edge_tts
+
+    raw_path = seg_audio_dir / f"{tag}_raw.mp3"
+
+    async def _run():
+        communicate = edge_tts.Communicate(text, cfg.voice)
+        await communicate.save(str(raw_path))
+
+    try:
+        asyncio.run(_run())
+        # Verify the raw audio file is non-empty (edge-tts can produce a
+        # 0-byte file for text it can't synthesize, e.g. single characters
+        # or pure punctuation).
+        if not raw_path.exists() or raw_path.stat().st_size < 100:
+            raise RuntimeError("edge-tts produced an empty audio file")
+    except Exception as e:
+        log.warning("[%s] edge-tts failed for segment %s (%s) — using silence", chapter.tag, tag, e)
+        _generate_silence(final_path, SILENT_FRAME_DURATION)
+        raw_path.unlink(missing_ok=True)
+        return final_path
+
+    try:
+        run_ffmpeg(
+            [
+                "ffmpeg", "-y", "-i", str(raw_path),
+                "-ar", str(AUDIO_SAMPLE_RATE), "-b:a", AUDIO_BITRATE,
+                str(final_path),
+            ]
+        )
+    except Exception as e:
+        log.warning("[%s] ffmpeg audio conversion failed for segment %s (%s) — using silence", chapter.tag, tag, e)
+        _generate_silence(final_path, SILENT_FRAME_DURATION)
+
+    raw_path.unlink(missing_ok=True)
+    return final_path
+
+
+def build_chapter_audio_track(cfg: PipelineConfig, chapter: Chapter, segment_audio_paths: List[Path]) -> Path:
+    """Concatenate per-segment (per-panel) audio clips into one continuous
+    chapter audio track, then apply Phase 3 audio post-processing:
+      1. Compressor (fast attack, 3:1 ratio) to even out spoken volume.
+      2. EQ boost (+2dB at 80-120Hz) for deep narrative gravitas.
+      3. Loudness normalization to -14 LUFS (YouTube standard).
+    Because each input clip is now a full continuous utterance (not a lone
+    word), the only joins left are the natural breath-like gaps between
+    panels/scenes — not mid-sentence chops. Resumable."""
+    out_path = cfg.temp_audio_dir / f"{chapter.tag}.mp3"
+    if out_path.exists():
+        log.info("[%s] chapter audio track already assembled — skipping", chapter.tag)
+        return out_path
+
+    concat_list = cfg.temp_audio_dir / f"{chapter.tag}_audio_concat.txt"
+    with concat_list.open("w", encoding="utf-8") as f:
+        for p in segment_audio_paths:
+            f.write(f"file '{p.resolve().as_posix()}'\n")
+
+    # First: raw concat (stream copy).
+    raw_path = cfg.temp_audio_dir / f"{chapter.tag}_raw.mp3"
+    run_ffmpeg(
+        [
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+            "-i", str(concat_list),
+            "-c", "copy",
+            str(raw_path),
+        ]
+    )
+
+    # Second: audio post-processing — compressor + EQ + loudnorm.
+    # acompressor: fast attack (5ms), 3:1 ratio, moderate threshold for even voice.
+    # bass: +2dB low-shelf boost at 100Hz for narrative gravitas.
+    # loudnorm: EBU R128 normalization to -14 LUFS (YouTube standard).
+    #
+    # NOTE: if a chapter has no narration at all (every segment fell back to
+    # silence — narration.json entries all empty, or narrative rewrite
+    # returned nothing), raw_path is pure digital silence end-to-end.
+    # loudnorm's gain boost on an absolutely-zero signal trips a real
+    # libmp3lame bug (psymodel.c calc_energy: Assertion 'el >= 0' failed,
+    # verified locally), which crashes ffmpeg outright. There's nothing to
+    # compress/normalize in silence anyway, so on that failure we just copy
+    # the raw (silent) track through untouched instead of crashing the job.
+    af = (
+        "acompressor=attack=5:release=80:ratio=3:threshold=-20dB:makeup=2,"
+        "bass=gain=2:frequency=100:width=80,"
+        f"loudnorm=I={TARGET_LOUDNESS_LUFS}:TP=-1.5:LRA=11"
+    )
+    try:
+        run_ffmpeg(
+            [
+                "ffmpeg", "-y", "-i", str(raw_path),
+                "-af", af,
+                "-ar", str(AUDIO_SAMPLE_RATE), "-b:a", AUDIO_BITRATE, "-ac", "1",
+                str(out_path),
+            ]
+        )
+    except RuntimeError as e:
+        log.warning(
+            "[%s] audio post-processing failed (%s) — falling back to raw (unprocessed) audio track",
+            chapter.tag, e,
+        )
+        shutil.copy2(raw_path, out_path)
+    raw_path.unlink(missing_ok=True)
+    log.info("[%s] assembled + post-processed chapter audio (compressor+EQ+loudnorm) -> %s", chapter.tag, out_path.name)
+    return out_path
+
+
+# ---------------------------------------------------------------------------
+# 4b. FRAME TIMING (proportional word-count split)
+# ---------------------------------------------------------------------------
+
+def split_frame_timings(text: str, positions: List[int], duration: float) -> dict:
+    """Proportionally split a segment's TTS duration across its frames by
+    word count. Ensures each frame gets at least MIN_FRAME_DURATION seconds
+    so panels never flash by too fast, PLUS adds FRAME_HOLD_PADDING (0.5s)
+    to each frame so the image stays on screen a beat after the voice ends
+    — giving the viewer time to read the panel text."""
+    frame_texts = split_into_segments(text, len(positions))
+    word_counts = [len(t.split()) for t in frame_texts]
+    total_words = sum(word_counts)
+    num_frames = len(positions)
+
+    timings: dict = {}
+
+    # Start with a proportional split.
+    cursor = 0.0
+    if total_words > 0:
+        for pos, count in zip(positions, word_counts):
+            span = duration * (count / total_words)
+            timings[pos] = (cursor, cursor + span)
+            cursor += span
+    else:
+        span = duration / max(1, num_frames)
+        for pos in positions:
+            timings[pos] = (cursor, cursor + span)
+            cursor += span
+
+    # Enforce MIN_FRAME_DURATION: stretch any short frame and push later ones out.
+    # Walk forward, adjusting each frame's end to be at least MIN_FRAME_DURATION
+    # from its start, then shifting subsequent starts.
+    prev_end = 0.0
+    for pos in positions:
+        start, end = timings[pos]
+        start = max(start, prev_end)  # ensure no overlap
+        if end - start < MIN_FRAME_DURATION:
+            end = start + MIN_FRAME_DURATION
+        timings[pos] = (start, end)
+        prev_end = end
+
+    # Add FRAME_HOLD_PADDING only to the LAST frame in the segment, not every
+    # frame. Adding padding between every frame creates silence gaps that make
+    # the narration sound chopped/cut. Instead, the image holds for 0.5s after
+    # the LAST frame's audio ends, giving the viewer a moment before the next
+    # segment starts.
+    if positions:
+        last_pos = positions[-1]
+        start, end = timings[last_pos]
+        timings[last_pos] = (start, end + FRAME_HOLD_PADDING)
+
+    return timings
+
+
+# ---------------------------------------------------------------------------
+# 5. CHAPTER RENDERER (static frames, memory-efficient per-segment ffmpeg)
+# ---------------------------------------------------------------------------
+
+def render_chapter(
+    cfg: PipelineConfig,
+    chapter: Chapter,
+    frame_paths: List[Path],
+    frame_durations: List[float],
+    audio_path: Optional[Path],
+) -> Optional[Path]:
+    """Render a chapter's static panel frames + per-frame narration into an MP4.
+
+    FAST approach: uses ffmpeg concat demuxer with image durations, so a single
+    ffmpeg call creates the entire chapter video (instead of N separate processes).
+    This is dramatically faster than the old per-segment approach.
+
+    Each frame is held on screen for exactly its own audio segment's duration
+    (frame_durations), so image swaps line up precisely with the narration.
+    RESUME: skip entirely if chap_XXX.mp4 already exists on disk."""
+    out_path = cfg.temp_chapters_dir / f"{chapter.tag}.mp4"
+    if out_path.exists():
+        log.info("[%s] chapter video already rendered — skipping (resume)", chapter.tag)
+        return out_path
+
+    if not frame_paths:
+        log.warning("[%s] no frames to render — skipping chapter", chapter.tag)
+        return None
+
+    # Write a concat demuxer input file with per-image durations.
+    # This lets a SINGLE ffmpeg call produce the whole slideshow video.
+    concat_list = cfg.temp_chapters_dir / f"{chapter.tag}_images.txt"
+    with concat_list.open("w", encoding="utf-8") as f:
+        for i, (fp, d) in enumerate(zip(frame_paths, frame_durations)):
+            # Ensure the image exists (use absolute path for concat demuxer).
+            abs_fp = fp.resolve().as_posix()
+            f.write(f"file '{abs_fp}'\n")
+            f.write(f"duration {d:.3f}\n")
+        # ffmpeg concat demuxer needs a trailing file entry (no duration).
+        last_fp = frame_paths[-1].resolve().as_posix()
+        f.write(f"file '{last_fp}'\n")
+
+    log.info("[%s] rendering %d frames with concat demuxer", chapter.tag, len(frame_paths))
+
+    # Single ffmpeg call: slideshow from concat demuxer + audio mux.
+    # Frames are already 1920x1080 from _compose_canvas, but ensure exact size.
+    video_filters = f"scale={CANVAS_W}:{CANVAS_H}:force_original_aspect_ratio=decrease,pad={CANVAS_W}:{CANVAS_H}:(ow-iw)/2:(oh-ih)/2"
+
+    if audio_path and audio_path.exists():
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", str(concat_list),
+            "-i", str(audio_path),
+            "-vf", video_filters,
+            "-map", "0:v", "-map", "1:a",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", AUDIO_BITRATE, "-ar", str(AUDIO_SAMPLE_RATE),
+            "-r", str(FPS),
+            "-shortest",
+            str(out_path),
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", str(concat_list),
+            "-vf", video_filters,
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            "-r", str(FPS),
+            str(out_path),
+        ]
+
+    try:
+        run_ffmpeg(cmd)
+    except RuntimeError as e:
+        log.error("[%s] concat render failed: %s", chapter.tag, e)
+        return None
+
+    concat_list.unlink(missing_ok=True)
+
+    log.info("[%s] chapter video rendered -> %s", chapter.tag, out_path.name)
+    return out_path
+
+
+
+
+# ---------------------------------------------------------------------------
+# 5b. AUDIO PADDING HELPER
+# ---------------------------------------------------------------------------
+
+def pad_audio_with_silence(audio_path: Path, target_duration: float) -> Path:
+    """If the audio is shorter than target_duration, append silence to reach it.
+    Returns the original path if already long enough, or a new padded path."""
+    current = get_audio_duration(audio_path)
+    if current >= target_duration:
+        return audio_path
+    padding_dur = target_duration - current
+    out = audio_path.with_suffix('.padded.mp3')
+    run_ffmpeg([
+        "ffmpeg", "-y",
+        "-i", str(audio_path),
+        "-f", "lavfi", "-i", f"anullsrc=r={AUDIO_SAMPLE_RATE}:cl=mono",
+        "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1",
+        "-t", f"{target_duration:.3f}",
+        "-ar", str(AUDIO_SAMPLE_RATE), "-b:a", AUDIO_BITRATE,
+        str(out),
+    ])
+    log.debug("Padded %s from %.1fs to %.1fs (+%.1fs silence)",
+             audio_path.name, current, target_duration, padding_dur)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 6. FFMPEG ZERO-REENCODE STREAM MERGER & BGM OVERLAY
+# ---------------------------------------------------------------------------
+
+def run_ffmpeg(cmd: List[str]) -> None:
+    log.debug("Running: %s", " ".join(cmd))
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if result.returncode != 0:
+        log.error("ffmpeg command failed:\n%s", result.stdout)
+        raise RuntimeError(f"ffmpeg failed (exit {result.returncode}): {' '.join(cmd)}")
+
+
+def merge_chapters(cfg: PipelineConfig, chapter_videos: List[Path]) -> Path:
+    """Zero-reencode concat of all chapter mp4s via ffmpeg's concat demuxer."""
+    concat_list = cfg.work_dir / "concat_list.txt"
+    with concat_list.open("w", encoding="utf-8") as f:
+        for cv in chapter_videos:
+            f.write(f"file '{cv.resolve().as_posix()}'\n")
+
+    merged_path = cfg.work_dir / "master_merged.mp4"
+    if merged_path.exists():
+        log.info("Merged master file already exists — skipping merge step (resume)")
+        return merged_path
+
+    log.info("Merging %d chapter videos via ffmpeg stream copy...", len(chapter_videos))
+    run_ffmpeg(
+        [
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+            "-i", str(concat_list),
+            "-c", "copy",
+            str(merged_path),
+        ]
+    )
+    log.info("Merge complete -> %s", merged_path.name)
+    return merged_path
+
+
+def finalize_output(cfg: PipelineConfig, merged_path: Path) -> Path:
+    """Copy the merged video to the final output path.
+
+    BGM overlay has been removed — the output is pure narration audio over
+    the panel video. This keeps the video focused on the story content without
+    any background music distraction.
+    """
+    cfg.output_path.parent.mkdir(parents=True, exist_ok=True)
+    log.info("Copying merged video to final output (no BGM overlay)...")
+    shutil.copy2(merged_path, cfg.output_path)
+    log.info("Final master video written -> %s", cfg.output_path)
+    return cfg.output_path
+
+
+# ---------------------------------------------------------------------------
+# CLEANUP
+# ---------------------------------------------------------------------------
+
+def cleanup_temp(cfg: PipelineConfig) -> None:
+    if cfg.keep_temp:
+        log.info("--keep-temp set: leaving working directory at %s", cfg.work_dir)
+        return
+    log.info("Cleaning up temporary working directory: %s", cfg.work_dir)
+    shutil.rmtree(cfg.work_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# ORCHESTRATION
+# ---------------------------------------------------------------------------
+
+def run_pipeline(cfg: PipelineConfig) -> None:
+    start = time.time()
+    cfg.ensure_dirs()
+    # Ensure the output directory exists.
+    cfg.output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    chapters = discover_chapters(cfg)
+    total = len(chapters)
+    chapter_videos: List[Path] = []
+    prev_tail = ""
+
+    cfg.write_progress("render", 0, total, f"Starting pipeline over {total} chapters")
+
+    for chapter in chapters:
+        t0 = time.time()
+        log.info("=== Chapter %d/%d (%s) ===", chapter.index, total, chapter.name)
+        cfg.write_progress("render", chapter.index - 1, total, f"Chapter {chapter.index}/{total}: {chapter.name}")
+
+        existing_video = cfg.temp_chapters_dir / f"{chapter.tag}.mp4"
+        if existing_video.exists():
+            log.info("[%s] fully rendered already — resuming past this chapter", chapter.tag)
+            chapter_videos.append(existing_video)
+            # Keep narrative continuity even when resuming: pull tail from cached script.
+            script_cache = cfg.temp_scripts_dir / f"{chapter.tag}.txt"
+            if script_cache.exists():
+                prev_tail = last_sentences(script_cache.read_text(encoding="utf-8"))
+            continue
+
+        # Slice returns [(frame_path, source_panel_index), ...] so we can map
+        # each frame to its source image's narration for perfect sync.
+        # PANEL-BY-PANEL MODE: use gutter-aware slicing that detects both
+        # horizontal AND vertical panel boundaries, so each manga panel
+        # gets its own individual 1920x1080 frame.
+        cfg.write_progress("slice", chapter.index - 1, total,
+                           f"Chapter {chapter.index}/{total}: slicing panels...")
+        frame_data = slice_chapter_panels(cfg, chapter)
+        frame_paths = [fp for fp, _ in frame_data]
+        frame_sources = [si for _, si in frame_data]
+
+        log.info("[%s] %d frames from %d panels (panel-by-panel slicing)", chapter.tag, len(frame_paths), len(chapter.panel_paths))
+        cfg.write_progress("slice", chapter.index - 1, total,
+                           f"Chapter {chapter.index}/{total}: sliced {len(frame_paths)} frames")
+
+        # Build an ordered list of (tag, text, frame_positions) "segments" —
+        # each one gets exactly ONE continuous edge-tts synthesis call, then
+        # real word timestamps from that single clip drive per-frame timing.
+        # This is what eliminates the audible stop-after-every-word chop:
+        # previously every one of these frame positions triggered its own
+        # separate edge-tts call.
+        segments: List[tuple] = []  # (tag, text, positions)
+
+        if chapter.image_narrations:
+            # PER-PANEL NARRATION MODE (preferred).
+            #
+            # Two narration.json key formats are supported:
+            #  (a) FRAME-KEYED (new, post-slice-first): keys are sliced frame
+            #      filenames like "frame_00000.jpg". Each frame already shows
+            #      ONE individual panel, so the VLM transcription is precise.
+            #      We build one TTS segment per frame.
+            #  (b) SOURCE-KEYED (legacy, pre-slice): keys are source page
+            #      filenames like "001.jpg". The VLM read the whole page, so
+            #      all sliced frames from the same source page share one
+            #      narration. We group frame positions by source panel index.
+            frame_keyed = any(
+                k.startswith("frame_") for k in chapter.image_narrations.keys()
+            )
+
+            if frame_keyed:
+                log.info("[%s] per-frame narration mode: %d frames (sliced-panel transcriptions)",
+                         chapter.tag, len(frame_paths))
+                # One segment per frame — narration perfectly synced to each panel.
+                for pos, fp in enumerate(frame_paths):
+                    raw_text = chapter.image_narrations.get(fp.name, "")
+                    img_tag = f"{chapter.tag}_frm{pos + 1:04d}"
+                    translated = translate_text(cfg, raw_text, img_tag)
+                    rephrased = rephrase_text(cfg, translated, img_tag, prev_tail)
+                    if rephrased:
+                        prev_tail = last_sentences(rephrased)
+                    segments.append((f"frm{pos + 1:04d}", rephrased, [pos]))
+            else:
+                log.info("[%s] per-image narration mode: %d source images, %d frames",
+                         chapter.tag, len(chapter.panel_paths), len(frame_paths))
+                # Legacy: translate + rephrase each source image's narration.
+                panel_narrations: dict = {}  # panel_index -> narration text
+                for idx, panel_path in enumerate(chapter.panel_paths):
+                    raw_text = chapter.image_narrations.get(panel_path.name, "")
+                    img_tag = f"{chapter.tag}_img{idx + 1:03d}"
+                    translated = translate_text(cfg, raw_text, img_tag)
+                    rephrased = rephrase_text(cfg, translated, img_tag, prev_tail)
+                    panel_narrations[idx] = rephrased
+                    if rephrased:
+                        prev_tail = last_sentences(rephrased)
+
+                # Group frame positions by source panel (preserving timeline order).
+                from collections import defaultdict as _dd
+                panel_frame_positions = _dd(list)  # panel_index -> [frame_positions]
+                for pos, si in enumerate(frame_sources):
+                    panel_frame_positions[si].append(pos)
+
+                for si, positions in panel_frame_positions.items():
+                    narr = panel_narrations.get(si, "")
+                    segments.append((f"img{si + 1:03d}", narr, positions))
+        else:
+            # CHAPTER-LEVEL NARRATION MODE (backward compat for old jobs without
+            # narration.json): one continuous narration clip for the whole
+            # chapter, sliced across all frames by real word timing.
+            log.info("[%s] chapter-level narration mode (no narration.json)", chapter.tag)
+            translated_text = translate_chapter_text(cfg, chapter)
+            narration = rephrase_chapter(cfg, chapter, translated_text, prev_tail)
+            prev_tail = last_sentences(narration) if narration else prev_tail
+            segments.append(("chapter", narration, list(range(len(frame_paths)))))
+
+        # Synthesize one continuous clip per segment and derive per-frame timing.
+        # No whisper transcription — timing is derived purely from proportional
+        # word-count splits, with a MIN_FRAME_DURATION floor so panels don't flash by.
+        frame_timing = [None] * len(frame_paths)  # position -> (start, end) clip-local to its segment
+        segment_audio_paths: List[Path] = []
+        chapter_offset = 0.0
+
+        for seg_idx, (tag, text, positions) in enumerate(segments):
+            cfg.write_progress("render", chapter.index - 1, total,
+                               f"Chapter {chapter.index}/{total}: TTS {seg_idx+1}/{len(segments)}")
+            audio_path_seg = synthesize_segment_audio(cfg, chapter, tag, text)
+            duration = get_audio_duration(audio_path_seg)
+
+            # Ensure the segment audio is at least long enough for all its
+            # frames at MIN_FRAME_DURATION each. Pad with silence if needed.
+            min_total = len(positions) * MIN_FRAME_DURATION
+            if duration < min_total:
+                audio_path_seg = pad_audio_with_silence(audio_path_seg, min_total)
+                duration = min_total
+
+            timings = split_frame_timings(text, positions, duration)
+            for pos in positions:
+                frame_timing[pos] = timings[pos]
+            # The frame timings now include FRAME_HOLD_PADDING (0.5s per frame)
+            # so the total visual duration is longer than the raw audio. Pad the
+            # audio with trailing silence so the audio track matches the video.
+            last_end = max((timings[p][1] for p in positions), default=duration)
+            if last_end > duration:
+                audio_path_seg = pad_audio_with_silence(audio_path_seg, last_end)
+                duration = last_end
+            segment_audio_paths.append(audio_path_seg)
+            chapter_offset += duration
+
+        # Build final per-frame durations from the timings.
+        frame_durations = [end - start for start, end in frame_timing]
+
+        cfg.write_progress("render", chapter.index - 1, total,
+                           f"Chapter {chapter.index}/{total}: building audio track")
+        audio_path = build_chapter_audio_track(cfg, chapter, segment_audio_paths) if segment_audio_paths else None
+
+        cfg.write_progress("render", chapter.index - 1, total,
+                           f"Chapter {chapter.index}/{total}: rendering {len(frame_paths)} frames")
+        video_path = render_chapter(cfg, chapter, frame_paths, frame_durations, audio_path)
+
+        if video_path:
+            chapter_videos.append(video_path)
+
+        log.info("[%s] done in %.1fs", chapter.tag, time.time() - t0)
+        cfg.write_progress("render", chapter.index, total, f"Chapter {chapter.index}/{total} rendered")
+
+    if not chapter_videos:
+        cfg.write_progress("render", total, total, "No chapter videos produced", status="error")
+        raise RuntimeError("No chapter videos were produced — nothing to merge.")
+
+    cfg.write_progress("merge", total, total, "Merging chapter videos")
+    merged = merge_chapters(cfg, chapter_videos)
+    cfg.write_progress("bgm", total, total, "Finalizing output")
+    finalize_output(cfg, merged)
+    cleanup_temp(cfg)
+
+    elapsed = time.time() - start
+    cfg.write_progress("done", total, total, f"Pipeline complete in {elapsed/60:.1f} min", status="done")
+    log.info("PIPELINE COMPLETE in %.1f minutes. Output: %s", elapsed / 60, cfg.output_path)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def parse_args(argv: Optional[List[str]] = None) -> PipelineConfig:
+    parser = argparse.ArgumentParser(
+        description="Convert local webtoon/manhwa chapter folders into a single master recap video."
+    )
+    parser.add_argument(
+        "--input-dir", required=True, type=Path,
+        help="Root dataset folder containing chapter_001/, chapter_002/, ... subfolders.",
+    )
+    parser.add_argument(
+        "--total-chapters", type=int, default=None,
+        help="Limit processing to the first N chapters (default: process all found).",
+    )
+    parser.add_argument(
+        "--bgm", type=Path, default=None,
+        help="Path to a background_music.mp3 file to loop under the narration at -20dB.",
+    )
+    parser.add_argument(
+        "--output", type=Path, default=Path("master_recap.mp4"),
+        help="Final output video path (default: ./master_recap.mp4).",
+    )
+    parser.add_argument(
+        "--work-dir", type=Path, default=Path("./_pipeline_work"),
+        help="Working directory for temp files (default: ./_pipeline_work). Reuse the same "
+             "path across runs to resume an interrupted pipeline.",
+    )
+    parser.add_argument(
+        "--voice", default="en-US-AndrewNeural",
+        help="edge-tts voice name (default: en-US-AndrewNeural).",
+    )
+    parser.add_argument(
+        "--openai-model", default="gpt-4o-mini",
+        help="OpenAI model for narrative rewriting (default: gpt-4o-mini).",
+    )
+    parser.add_argument(
+        "--openai-api-key", default=os.environ.get("OPENAI_API_KEY"),
+        help="OpenAI API key for narrative rewriting (or set OPENAI_API_KEY env var).",
+    )
+    parser.add_argument(
+        "--narration-provider", default="auto", choices=["auto", "openai", "groq", "none"],
+        help="LLM provider for narrative rewriting (default: auto = prefer OpenAI, fall back to Groq, else none).",
+    )
+    parser.add_argument(
+        "--narration-model", default=None,
+        help="Override the narration model name (default: openai_model or groq_model depending on provider).",
+    )
+    parser.add_argument(
+        "--progress-file", type=Path, default=None,
+        help="JSON file path to write progress updates to (polled by the Node orchestrator).",
+    )
+    parser.add_argument(
+        "--groq-api-key", default=os.environ.get("GROQ_API_KEY"),
+        help="Groq API key used to translate non-English chapter text to English "
+             "before narration rewriting (or set GROQ_API_KEY env var). "
+             "If omitted, translation is skipped and raw text is used as-is.",
+    )
+    parser.add_argument(
+        "--groq-model", default="llama-3.3-70b-versatile",
+        help="Groq model used for translation (default: llama-3.3-70b-versatile).",
+    )
+    parser.add_argument(
+        "--no-translate", action="store_true",
+        help="Disable the translation step even if a Groq key is available.",
+    )
+    parser.add_argument(
+        "--keep-temp", action="store_true",
+        help="Do not delete the working directory after a successful run.",
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable debug logging.",
+    )
+    parser.add_argument(
+        "--slice-only", action="store_true",
+        help="Only run the panel-slicing stage for all chapters, then exit. "
+             "Writes frame_NNNNN.jpg files + manifest.json under work/temp_slices/chapter_XXX/. "
+             "Used by the Node orchestrator so the VLM can transcribe each individual sliced panel "
+             "before the full render pipeline runs (improves narration accuracy).",
+    )
+
+    args = parser.parse_args(argv)
+    if args.verbose:
+        log.setLevel(logging.DEBUG)
+
+    if args.bgm and not args.bgm.exists():
+        parser.error(f"--bgm file not found: {args.bgm}")
+
+    return PipelineConfig(
+        input_dir=args.input_dir,
+        output_path=args.output,
+        total_chapters=args.total_chapters,
+        bgm_path=args.bgm,
+        work_dir=args.work_dir,
+        voice=args.voice,
+        openai_model=args.openai_model,
+        openai_api_key=args.openai_api_key,
+        keep_temp=args.keep_temp,
+        groq_api_key=args.groq_api_key,
+        groq_model=args.groq_model,
+        translate=not args.no_translate,
+        narration_provider=args.narration_provider,
+        narration_model=args.narration_model,
+        progress_file=args.progress_file,
+        slice_only=args.slice_only,
+    )
+
+
+def check_dependencies(cfg: Optional[PipelineConfig] = None) -> None:
+    """Fail fast with a clear message if required tools are missing.
+
+    In --slice-only mode, edge-tts is not needed (slicing only uses cv2/PIL/numpy),
+    so we skip that check to allow pre-slicing even if TTS deps aren't installed yet.
+
+    AUTO-INSTALL: if edge-tts is missing, attempt to install it via pip before
+    failing. This handles the case where the Python venv gets reset.
+    """
+    if shutil.which("ffmpeg") is None:
+        log.error("ffmpeg not found on PATH. Install it (e.g. `apt install ffmpeg` / `brew install ffmpeg`).")
+        sys.exit(1)
+    # edge-tts is only needed for the full render pipeline, not for --slice-only.
+    if cfg is not None and getattr(cfg, "slice_only", False):
+        return
+    try:
+        import edge_tts  # noqa: F401
+    except ImportError:
+        log.warning("edge-tts not installed — attempting auto-install via pip...")
+        import subprocess
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "edge-tts", "openai"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if result.returncode == 0:
+                log.info("edge-tts + openai installed successfully")
+                # Verify it imports now
+                import importlib
+                importlib.invalidate_caches()
+                import edge_tts  # noqa: F401
+                log.info("edge-tts import verified")
+            else:
+                log.error("Failed to install edge-tts: %s", result.stderr[-300:])
+                sys.exit(1)
+        except Exception as e:
+            log.error("Failed to auto-install edge-tts: %s. Run: pip install edge-tts", e)
+            sys.exit(1)
+
+
+def run_slice_only(cfg: PipelineConfig) -> None:
+    """Run ONLY the panel-slicing stage for all chapters, then exit.
+
+    This produces work/temp_slices/chapter_XXX/frame_NNNNN.jpg + manifest.json
+    for every chapter, so the Node orchestrator can run the VLM on each
+    individual sliced panel (much more accurate than reading a full page with
+    multiple panels at once). The full render pipeline reuses these slices
+    via manifest resume support.
+    """
+    start = time.time()
+    cfg.ensure_dirs()
+    chapters = discover_chapters(cfg)
+    total = len(chapters)
+    if total == 0:
+        log.error("No chapters found under %s", cfg.input_dir)
+        return
+    log.info("=== SLICE-ONLY MODE: %d chapter(s) ===", total)
+    cfg.write_progress("slice", 0, total, f"Slicing {total} chapter(s)…")
+    total_frames = 0
+    for chapter in chapters:
+        t0 = time.time()
+        log.info("--- Chapter %d/%d (%s) ---", chapter.index, total, chapter.name)
+        cfg.write_progress("slice", chapter.index - 1, total,
+                           f"Chapter {chapter.index}/{total}: slicing panels…")
+        frame_data = slice_chapter_panels(cfg, chapter)
+        n = len(frame_data)
+        total_frames += n
+        dt = time.time() - t0
+        log.info("[%s] %d frames from %d source panels (%.1fs)",
+                 chapter.tag, n, len(chapter.panel_paths), dt)
+        cfg.write_progress("slice", chapter.index - 1, total,
+                           f"Chapter {chapter.index}/{total}: sliced {n} frames")
+    log.info("=== SLICE-ONLY DONE: %d chapters, %d total frames in %.1fs ===",
+             total, total_frames, time.time() - start)
+    cfg.write_progress("done", total, total,
+                       f"Slicing complete: {total_frames} frames across {total} chapter(s).")
+
+
+def main() -> int:
+    cfg = parse_args()
+    check_dependencies(cfg)
+    try:
+        if cfg.slice_only:
+            run_slice_only(cfg)
+        else:
+            run_pipeline(cfg)
+        return 0
+    except SystemExit:
+        raise
+    except Exception as e:
+        log.error("Pipeline failed: %s", e)
+        log.info(
+            "Progress is saved under %s — rerun the same command to resume "
+            "from the last completed chapter.",
+            cfg.work_dir,
+        )
+        return 1
+
+if __name__ == "__main__":
+    sys.exit(main())
