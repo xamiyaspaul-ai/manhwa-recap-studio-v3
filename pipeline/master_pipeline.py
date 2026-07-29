@@ -71,10 +71,17 @@ OVERLAP_RATIO = 0.0  # No overlap — each panel gets its own clean frame
 FPS = 24  # YouTube-standard 24fps
 AUDIO_SAMPLE_RATE = 44100
 AUDIO_BITRATE = "192k"  # higher quality audio for narration
-SILENT_FRAME_DURATION = 6.0  # seconds a frame holds on screen if it has no narration text
-MIN_FRAME_DURATION = 3.0  # minimum seconds per frame — prevents panels from flashing by too fast
+SILENT_FRAME_DURATION = 2.0  # seconds a no-text panel holds on screen — deliberately SHORTER
+                          # than narrated panels (MIN_FRAME_DURATION) so text-less art panels don't
+                          # drag. ~1s less than narrated frames per user request.
+MIN_FRAME_DURATION = 3.0  # minimum seconds per NARRATED frame — prevents panels from flashing by too fast
 FRAME_HOLD_PADDING = 0.5  # extra seconds a frame stays on screen AFTER its narration audio ends,
                           # so the viewer can read the panel text even after the voice finishes.
+# Short fade-in/fade-out applied to every TTS segment to eliminate click/pop artifacts at
+# clip boundaries when segments are concatenated. 25ms in / 40ms out is inaudible to humans
+# but removes the zero-crossing discontinuity that causes the "pop" sound.
+SEGMENT_FADE_IN = 0.025
+SEGMENT_FADE_OUT = 0.040
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 MAX_FRAMES_PER_PANEL = 4  # Cap frames per source panel (prevents overslicing tall splash panels)
 
@@ -1579,10 +1586,23 @@ def synthesize_segment_audio(cfg: PipelineConfig, chapter: Chapter, tag: str, te
         raw_path.unlink(missing_ok=True)
         return final_path
 
+    # Re-encode at the pipeline's standard sample rate + bitrate, AND apply
+    # a short fade-in/fade-out. The fades eliminate the zero-crossing
+    # discontinuity at the start/end of each TTS clip, which is the #1 cause
+    # of audible "clicks" and "pops" when clips are concatenated back-to-back.
+    # 25ms in / 40ms out is imperceptible to human hearing but removes the
+    # transient completely. (edge-tts output often starts/ends mid-waveform.)
     try:
+        raw_dur = get_audio_duration(raw_path)
+        fade_out_start = max(0.0, raw_dur - SEGMENT_FADE_OUT)
+        seg_af = (
+            f"afade=t=in:st=0:d={SEGMENT_FADE_IN},"
+            f"afade=t=out:st={fade_out_start:.3f}:d={SEGMENT_FADE_OUT}"
+        )
         run_ffmpeg(
             [
                 "ffmpeg", "-y", "-i", str(raw_path),
+                "-af", seg_af,
                 "-ar", str(AUDIO_SAMPLE_RATE), "-b:a", AUDIO_BITRATE,
                 str(final_path),
             ]
@@ -1597,10 +1617,7 @@ def synthesize_segment_audio(cfg: PipelineConfig, chapter: Chapter, tag: str, te
 
 def build_chapter_audio_track(cfg: PipelineConfig, chapter: Chapter, segment_audio_paths: List[Path]) -> Path:
     """Concatenate per-segment (per-panel) audio clips into one continuous
-    chapter audio track, then apply Phase 3 audio post-processing:
-      1. Compressor (fast attack, 3:1 ratio) to even out spoken volume.
-      2. EQ boost (+2dB at 80-120Hz) for deep narrative gravitas.
-      3. Loudness normalization to -14 LUFS (YouTube standard).
+    chapter audio track, then apply loudness normalization.
     Because each input clip is now a full continuous utterance (not a lone
     word), the only joins left are the natural breath-like gaps between
     panels/scenes — not mid-sentence chops. Resumable."""
@@ -1625,9 +1642,18 @@ def build_chapter_audio_track(cfg: PipelineConfig, chapter: Chapter, segment_aud
         ]
     )
 
-    # Second: audio post-processing — compressor + EQ + loudnorm.
-    # acompressor: fast attack (5ms), 3:1 ratio, moderate threshold for even voice.
-    # bass: +2dB low-shelf boost at 100Hz for narrative gravitas.
+    # Second: audio post-processing — gentle loudness normalization only.
+    #
+    # PREVIOUSLY this chain used acompressor(attack=5ms,makeup=+2dB) + bass(+2dB)
+    # + loudnorm. The compressor's 5ms attack combined with +2dB makeup gain
+    # exaggerated the attack transient of every spoken phrase, producing an
+    # audible "pop" at the onset of each narration segment. The bass boost
+    # added a low-frequency "thump" on top. Both have been REMOVED.
+    #
+    # Per-segment fade-in/fade-out (applied in synthesize_segment_audio) now
+    # eliminates click artifacts at clip boundaries, so all we need here is
+    # smooth loudness normalization to keep volume consistent across chapters.
+    #
     # loudnorm: EBU R128 normalization to -14 LUFS (YouTube standard).
     #
     # NOTE: if a chapter has no narration at all (every segment fell back to
@@ -1636,13 +1662,9 @@ def build_chapter_audio_track(cfg: PipelineConfig, chapter: Chapter, segment_aud
     # loudnorm's gain boost on an absolutely-zero signal trips a real
     # libmp3lame bug (psymodel.c calc_energy: Assertion 'el >= 0' failed,
     # verified locally), which crashes ffmpeg outright. There's nothing to
-    # compress/normalize in silence anyway, so on that failure we just copy
+    # normalize in silence anyway, so on that failure we just copy
     # the raw (silent) track through untouched instead of crashing the job.
-    af = (
-        "acompressor=attack=5:release=80:ratio=3:threshold=-20dB:makeup=2,"
-        "bass=gain=2:frequency=100:width=80,"
-        f"loudnorm=I={TARGET_LOUDNESS_LUFS}:TP=-1.5:LRA=11"
-    )
+    af = f"loudnorm=I={TARGET_LOUDNESS_LUFS}:TP=-1.5:LRA=11"
     try:
         run_ffmpeg(
             [

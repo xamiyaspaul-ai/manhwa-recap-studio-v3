@@ -45,14 +45,69 @@ interface ChapterFeedItem {
 }
 
 const VOICES = [
+  // ── English (US) ──
+  { value: "en-US-AndrewMultilingualNeural", label: "Andrew Multilingual (US, male)" },
   { value: "en-US-AndrewNeural", label: "Andrew (US, male)" },
-  { value: "en-US-EmmaNeural", label: "Emma (US, female)" },
+  { value: "en-US-BrianMultilingualNeural", label: "Brian Multilingual (US, male)" },
   { value: "en-US-BrianNeural", label: "Brian (US, male)" },
+  { value: "en-US-ChristopherNeural", label: "Christopher (US, male)" },
+  { value: "en-US-RogerNeural", label: "Roger (US, male)" },
+  { value: "en-US-SteffanNeural", label: "Steffan (US, male)" },
+  { value: "en-US-AvaMultilingualNeural", label: "Ava Multilingual (US, female)" },
   { value: "en-US-AvaNeural", label: "Ava (US, female)" },
+  { value: "en-US-EmmaMultilingualNeural", label: "Emma Multilingual (US, female)" },
+  { value: "en-US-EmmaNeural", label: "Emma (US, female)" },
+  { value: "en-US-JennyNeural", label: "Jenny (US, female)" },
+  { value: "en-US-MichelleNeural", label: "Michelle (US, female)" },
+  { value: "en-US-CoraNeural", label: "Cora (US, female)" },
+  { value: "en-US-ElizabethNeural", label: "Elizabeth (US, female)" },
+  { value: "en-US-MonicaNeural", label: "Monica (US, female)" },
+  { value: "en-US-SaraNeural", label: "Sara (US, female)" },
+  { value: "en-US-NancyNeural", label: "Nancy (US, female)" },
+  // ── English (UK) ──
   { value: "en-GB-RyanNeural", label: "Ryan (UK, male)" },
+  { value: "en-GB-ThomasNeural", label: "Thomas (UK, male)" },
   { value: "en-GB-SoniaNeural", label: "Sonia (UK, female)" },
+  { value: "en-GB-LibbyNeural", label: "Libby (UK, female)" },
+  { value: "en-GB-MaisieNeural", label: "Maisie (UK, female)" },
+  // ── English (Australia) ──
   { value: "en-AU-WilliamNeural", label: "William (AU, male)" },
+  { value: "en-AU-DarrenNeural", label: "Darren (AU, male)" },
+  { value: "en-AU-DuncanNeural", label: "Duncan (AU, male)" },
   { value: "en-AU-NatashaNeural", label: "Natasha (AU, female)" },
+  { value: "en-AU-AnnetteNeural", label: "Annette (AU, female)" },
+  { value: "en-AU-CarlyNeural", label: "Carly (AU, female)" },
+  { value: "en-AU-EliseNeural", label: "Elise (AU, female)" },
+  { value: "en-AU-MadisonNeural", label: "Madison (AU, female)" },
+  // ── English (Canada) ──
+  { value: "en-CA-LiamNeural", label: "Liam (CA, male)" },
+  { value: "en-CA-ClaraNeural", label: "Clara (CA, female)" },
+  // ── English (Ireland) ──
+  { value: "en-IE-ConnorNeural", label: "Connor (IE, male)" },
+  { value: "en-IE-EmilyNeural", label: "Emily (IE, female)" },
+  // ── English (India) ──
+  { value: "en-IN-PrabhatNeural", label: "Prabhat (IN, male)" },
+  { value: "en-IN-NeerjaNeural", label: "Neerja (IN, female)" },
+  // ── English (South Africa) ──
+  { value: "en-ZA-LukeNeural", label: "Luke (ZA, male)" },
+  { value: "en-ZA-LeahNeural", label: "Leah (ZA, female)" },
+  // ── Other popular languages ──
+  { value: "ja-JP-KeitaNeural", label: "Keita (日本語 JP, male)" },
+  { value: "ja-JP-NanamiNeural", label: "Nanami (日本語 JP, female)" },
+  { value: "ko-KR-InJoonNeural", label: "InJoon (한국어 KR, male)" },
+  { value: "ko-KR-SunHiNeural", label: "Sun-Hi (한국어 KR, female)" },
+  { value: "es-ES-AlvaroNeural", label: "Álvaro (Español ES, male)" },
+  { value: "es-ES-ElviraNeural", label: "Elvira (Español ES, female)" },
+  { value: "fr-FR-HenriNeural", label: "Henri (Français FR, male)" },
+  { value: "fr-FR-DeniseNeural", label: "Denise (Français FR, female)" },
+  { value: "de-DE-ConradNeural", label: "Conrad (Deutsch DE, male)" },
+  { value: "de-DE-KatjaNeural", label: "Katja (Deutsch DE, female)" },
+  { value: "pt-BR-AntonioNeural", label: "Antonio (Português BR, male)" },
+  { value: "pt-BR-FranciscaNeural", label: "Francisca (Português BR, female)" },
+  { value: "hi-IN-MadhurNeural", label: "Madhur (हिन्दी IN, male)" },
+  { value: "hi-IN-SwaraNeural", label: "Swara (हिन्दी IN, female)" },
+  { value: "zh-CN-YunxiNeural", label: "云希 (中文 CN, male)" },
+  { value: "zh-CN-XiaoxiaoNeural", label: "晓晓 (中文 CN, female)" },
 ];
 
 export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {

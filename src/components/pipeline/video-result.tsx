@@ -71,7 +71,9 @@ export function VideoResult({ job }: VideoResultProps) {
         </div>
         <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-card/50 border border-border">
           <Clock className="h-3.5 w-3.5 text-amber-400" />
-          <span className="text-xs font-medium">{job.voice.split("-").pop()}</span>
+          <span className="text-xs font-medium">
+            {job.voice.replace(/^[a-z]{2}-[A-Z]{2}-/, "").replace(/Neural$/, "").replace(/Multilingual$/, " ML")}
+          </span>
         </div>
       </div>
 
