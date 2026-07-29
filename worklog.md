@@ -23,3 +23,28 @@ Stage Summary:
 - DB schema in sync. No errors in dev.log or mini-service log.
 - Artifacts: verify-home.png, verify-home-desktop.png, verify-home-mobile.png (browser screenshots).
 - Note: the dev server is intentionally NOT started via `bun run build`/`next build` (per env rules); it runs via `bun run dev` (Turbopack) on port 3000.
+
+---
+Task ID: 2
+Agent: Z.ai Code (main)
+Task: User reported "the output video was not produced" — investigate the completed job in the website, run a test pipeline, and verify the output video.
+
+Work Log:
+- Checked services: Next.js :3000 + pipeline-service :3001 both still running (orphaned to init, persistent).
+- Inspected DB: 1 existing job "Nano Machine" (id=cms65zrpc...) with status=done, progress=100%, outputVideo=master_recap.mp4.
+- Checked disk: the .mp4 ALREADY EXISTED at data/jobs/{id}/output/master_recap.mp4 (72MB). ffprobe confirmed valid H.264 1920x1080, AAC, 512s duration. So the pipeline HAD produced the video — the problem was the website couldn't serve/play it.
+- Root cause found: src/components/pipeline/video-result.tsx requests /api/download/${job.id} for the <video> source + Download/Open/Share buttons, BUT the route src/app/api/download/[id]/route.ts DID NOT EXIST (confirmed: curl returned 404). The repo shipped the r2.ts read-helper and the video-result component but never the actual download route.
+- FIX: Created src/app/api/download/[id]/route.ts. It (1) reads the Job from DB, (2) if r2Key set + R2 configured → 302 redirect to presigned R2 URL, (3) else resolves the local file via job.outputDir/job.outputVideo (fallback to outputVideoPath(jobId)), (4) streams with full HTTP Range support (206 Partial Content, Content-Range, Accept-Ranges, Content-Length) so the <video> element can seek. Handles 404 (job/video not found) and 416 (range not satisfiable).
+- Verified route: GET no-Range → 200 + 72MB video/mp4; Range bytes=0-1023 → 206 + Content-Range bytes 0-1023/72080542; Range near end → 206. Content-Disposition: inline; filename="Nano_Machine_recap.mp4".
+- Browser-verified the EXISTING completed job: navigated home → expanded "Recent jobs (1 · 1 completed)" → clicked the Nano Machine card → VideoResult rendered with a <video> element. JS eval: src=/api/download/{id}, readyState=4 (HAVE_ENOUGH_DATA), duration=512.31s, paused=false (playing after click), error=null. Network tab showed multiple 206 Partial Content media requests. No page/console errors. Screenshot: qa-video-result.png.
+- Ran a FRESH end-to-end test job: POST /api/jobs {mangaId:as-nano-machine, chapterLimit:1, useBgm:false} → job cms66v509... created, pipeline-service picked it up. Monitored stages: pending → scraping (24 images) → summarizing/transcribe (101 panels, VLM; a few panels hit a content-filter 400 from the VLM SDK which the pipeline handled gracefully via placeholder fallback, non-fatal) → rendering (101 frames via Python master_pipeline.py) → done. Total ~6 min.
+- New job completed: status=done, progress=100%, outputVideo=master_recap.mp4 (72MB on disk). ffprobe: H.264 1920x1080, AAC, 513s. Download route: 206 + 200 OK.
+- Browser-verified the NEW job too: navigated to "Recent jobs (2 · 2 completed)" → clicked newest (7m ago) → video element src=/api/download/{newId}, readyState=4, duration=513.1s, error=null, 206 media requests, no errors. Screenshot: qa-video-result-new.png.
+- Lint: bun run lint → exit 0 (the new route is clean).
+
+Stage Summary:
+- ROOT CAUSE: the download API route was missing from the repo (frontend referenced /api/download/{id} but no route.ts existed) → video player + download buttons 404'd, making it look like "no output video" even though the pipeline had produced a valid .mp4 on disk.
+- FIX: created src/app/api/download/[id]/route.ts with Range-supporting video streaming + R2 redirect fallback.
+- VERIFIED: both the pre-existing completed job AND a freshly-run test job produce valid playable videos (H.264 1080p, ~8.5 min, ~72MB) that stream correctly through the new route and play in the browser (<video readyState=4, 206 Partial Content, no errors).
+- Artifacts: src/app/api/download/[id]/route.ts (new); screenshots qa-video-result.png + qa-video-result-new.png.
+- Both services still running (:3000, :3001). DB now has 2 completed jobs, both with valid output videos on disk.
