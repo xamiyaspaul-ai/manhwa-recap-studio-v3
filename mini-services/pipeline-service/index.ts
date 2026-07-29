@@ -32,6 +32,8 @@ import {
   jobDir,
   PIPELINE_SCRIPT,
   PYTHON_BIN,
+  DATA_DIR,
+  PROJECT_ROOT,
   getSourceFromId,
   fetchChaptersForSource,
   fetchImagesForSource,
@@ -110,6 +112,72 @@ async function httpHandler(req: IncomingMessage, res: ServerResponse) {
     return
   }
 
+  // --- Voice preview ---------------------------------------------------------
+  // GET /preview/voice?voice={voiceId}
+  // Generates (or serves from cache) a short ~4-7s edge-tts preview MP3 so
+  // users can hear how a narration voice sounds before starting a job. This
+  // lives in the mini-service (not the Next.js API) because edge-tts requires
+  // Python, which isn't available on serverless hosts like Vercel. The Next.js
+  // /api/voice-preview route proxies to this endpoint.
+  if (req.method === 'GET' && url === '/preview/voice') {
+    const fullUrl = new URL(req.url || '', 'http://localhost')
+    const voice = fullUrl.searchParams.get('voice') || ''
+    const VOICE_ID_RE = /^[a-z]{2}-[A-Z]{2}-[A-Za-z0-9]+Neural$/
+    if (!VOICE_ID_RE.test(voice)) {
+      sendJson(res, 400, { error: 'Invalid or missing voice parameter.' })
+      return
+    }
+    const path = await import('path')
+    const cacheDir = path.join(DATA_DIR, 'cache', 'voice-preview')
+    const cacheFile = path.join(cacheDir, `${voice}.mp3`)
+    const fs = await import('fs/promises')
+
+    try {
+      // Serve from cache if present + non-empty.
+      try {
+        const stat = await fs.stat(cacheFile)
+        if (stat.size > 100) {
+          const data = await fs.readFile(cacheFile)
+          res.writeHead(200, {
+            'Content-Type': 'audio/mpeg',
+            'Content-Length': String(stat.size),
+            'Cache-Control': 'public, max-age=86400, immutable',
+          })
+          res.end(data)
+          return
+        }
+      } catch {
+        // not cached — fall through to generation
+      }
+
+      // Generate via Python.
+      await fs.mkdir(cacheDir, { recursive: true })
+      const scriptPath = path.join(PROJECT_ROOT, 'pipeline', 'voice_preview.py')
+      const result = spawnSync(PYTHON_BIN, [scriptPath, '--voice', voice, '--output', cacheFile], {
+        encoding: 'utf8',
+        timeout: 25000,
+        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      })
+      if (result.status !== 0 || !(await fileExists(cacheFile))) {
+        console.error('[pipeline-service] voice preview failed for', voice, (result.stderr || '').slice(-200))
+        sendJson(res, 502, { error: 'Failed to generate voice preview.' })
+        return
+      }
+      const data = await fs.readFile(cacheFile)
+      res.writeHead(200, {
+        'Content-Type': 'audio/mpeg',
+        'Content-Length': String(data.length),
+        'Cache-Control': 'public, max-age=86400, immutable',
+      })
+      res.end(data)
+      return
+    } catch (err) {
+      console.error('[pipeline-service] voice preview error:', err)
+      sendJson(res, 500, { error: 'Internal error.' })
+      return
+    }
+  }
+
   sendJson(res, 404, { error: 'not found' })
 }
 
@@ -128,12 +196,12 @@ const io = new Server(httpServer, {
   pingInterval: 25000,
 })
 
-// Intercept /internal/* requests BEFORE engine.io processes them, since
-// `path: '/'` makes engine.io claim every URL.
+// Intercept /internal/* and /preview/* requests BEFORE engine.io processes
+// them, since `path: '/'` makes engine.io claim every URL.
 io.engine.use((req: any, res: any, next: any) => {
   const reqUrl: string = req.url || '/'
   const urlPath = reqUrl.split('?')[0]
-  if (urlPath.startsWith('/internal/')) {
+  if (urlPath.startsWith('/internal/') || urlPath.startsWith('/preview/')) {
     void httpHandler(req, res)
     // Do NOT call next() — we handled it.
     return

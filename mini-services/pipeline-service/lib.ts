@@ -15,24 +15,47 @@ import path from 'path'
 
 // ---------------------------------------------------------------------------
 // Prisma — single shared client pointing at the same SQLite DB.
+// Supports both local file: SQLite (laptop/sandbox) and libsql:// Turso
+// (when the Next.js app is deployed to Vercel and shares a Turso DB).
 // ---------------------------------------------------------------------------
 
 const globalForPrisma = globalThis as unknown as { pipelinePrisma: PrismaClient | undefined }
 
-export const db =
-  globalForPrisma.pipelinePrisma ??
-  new PrismaClient({
-    log: ['error', 'warn'],
-  })
+function createPrismaClient(): PrismaClient {
+  const url = process.env.DATABASE_URL || ''
+  if (url.startsWith('libsql://') || url.startsWith('http://') || url.startsWith('https://')) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { PrismaLibSQL } = require('@prisma/adapter-libsql')
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { createClient } = require('@libsql/client')
+    const libsql = createClient({
+      url,
+      authToken: process.env.DATABASE_AUTH_TOKEN || undefined,
+    })
+    const adapter = new PrismaLibSQL(libsql)
+    return new PrismaClient({ adapter })
+  }
+  return new PrismaClient({ log: ['error', 'warn'] })
+}
+
+export const db = globalForPrisma.pipelinePrisma ?? createPrismaClient()
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.pipelinePrisma = db
 
 // ---------------------------------------------------------------------------
-// Paths — hardcoded so the mini-service is decoupled from the parent app's CWD.
+// Paths — env-configurable so the mini-service can run anywhere (laptop, VPS,
+// etc.), not just the original sandbox. Defaults preserve the original
+// /home/z/my-project layout for backwards compatibility.
 // ---------------------------------------------------------------------------
 
-export const DATA_DIR = '/home/z/my-project/data'
-export const PIPELINE_SCRIPT = '/home/z/my-project/pipeline/master_pipeline.py'
+export const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : '/home/z/my-project/data'
+// Pipeline script lives next to the parent app; resolve via PROJECT_ROOT if set,
+// otherwise fall back to the known sandbox location.
+const PROJECT_ROOT = process.env.PROJECT_ROOT || '/home/z/my-project'
+export { PROJECT_ROOT }
+export const PIPELINE_SCRIPT = path.join(PROJECT_ROOT, 'pipeline', 'master_pipeline.py')
 export const PYTHON_BIN = process.env.PYTHON_BIN || 'python3'
 
 export function jobDir(jobId: string): string {

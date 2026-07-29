@@ -11,7 +11,11 @@ import type { CreateJobInput, JobSummary } from "@/types/pipeline";
 
 export const dynamic = "force-dynamic";
 
-const PIPELINE_SERVICE_URL = "http://localhost:3001";
+// URL of the pipeline mini-service (socket.io + Python pipeline).
+// - Local dev / sandbox: defaults to http://localhost:3001
+// - Vercel / production: set PIPELINE_SERVICE_URL to your laptop's public
+//   tunnel URL (e.g. https://your-laptop.trycloudflare.com)
+const PIPELINE_SERVICE_URL = process.env.PIPELINE_SERVICE_URL || "http://localhost:3001";
 
 /** Fire-and-forget POST to the pipeline service with a short timeout. */
 async function notifyPipeline(

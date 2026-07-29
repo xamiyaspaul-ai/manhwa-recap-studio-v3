@@ -122,3 +122,43 @@ Stage Summary:
 - Files modified: src/components/pipeline/manga-config.tsx (preview button + audio player + state management).
 - Artifacts: qa-voice-preview-idle.png, qa-voice-preview-playing.png, qa-voice-preview-emma.png.
 - Both services still running (:3000, :3001). Lint clean. No regressions.
+
+---
+Task ID: 5
+Agent: Z.ai Code (main)
+Task: Prepare the code for Vercel deployment (free tier, split architecture). Also answered Terabox feasibility question.
+
+Work Log:
+- Answered Terabox question: 1 TB free is attractive, BUT no official free-tier API, no HTTP Range support (video player can't seek/stream), and download links require login. Best used only as COLD archive (3rd tier), not primary streaming. Recommended stack: R2 (streaming, 10 GB) + Google Drive (archive, 15 GB) + Terabox (cold backup, 1 TB).
+- Architectural decision: Vercel is serverless (no long-running processes, no Python, no ffmpeg). So the app must split: Vercel hosts frontend+API; the pipeline-service (Python+socket.io) stays on the user's laptop, exposed via Cloudflare Tunnel. Both share a Turso DB + R2 storage.
+- Added Turso (libsql) database adapter support:
+  - src/lib/db.ts: rewrote to detect DATABASE_URL scheme. libsql:// / http:// / https:// → use PrismaLibSQL adapter (lazy-required so local SQLite dev doesn't need the dep). file: → standard PrismaClient.
+  - mini-services/pipeline-service/lib.ts: same Turso support added to the mini-service's Prisma client (shares the same DB).
+  - Installed @prisma/adapter-libsql + @libsql/client in both root and mini-service.
+- Made DATA_DIR env-configurable:
+  - src/lib/paths.ts: reads DATA_DIR env var (defaults to ./data).
+  - mini-services/pipeline-service/lib.ts: reads DATA_DIR + PROJECT_ROOT env vars (defaults to /home/z/my-project for backwards compat).
+  - This lets laptop users point storage at an external HDD.
+- Made PIPELINE_SERVICE_URL env-configurable in both src/app/api/jobs/route.ts and src/app/api/jobs/[id]/route.ts (defaults to http://localhost:3001).
+- Made socket.io client env-configurable in src/lib/socket.ts: if NEXT_PUBLIC_PIPELINE_SERVICE_URL is set (Vercel), connects directly to it; otherwise uses the Caddy XTransformPort hack (local dev).
+- Moved voice-preview generation from Next.js (Python spawnSync) into the pipeline-service mini-service:
+  - Added GET /preview/voice?voice={id} endpoint to mini-services/pipeline-service/index.ts (generates via Python edge-tts, caches to DATA_DIR/cache/voice-preview/).
+  - Updated the engine.io middleware to also intercept /preview/* (in addition to /internal/*).
+  - Rewrote src/app/api/voice-preview/route.ts as a thin proxy: fetches from PIPELINE_SERVICE_URL/preview/voice, returns the audio buffer. This makes the Next.js layer 100% Python-free — deployable to Vercel.
+  - Imported DATA_DIR + PROJECT_ROOT into index.ts; exported PROJECT_ROOT from lib.ts.
+- Created .env.example documenting all env vars (DATABASE_URL/TOKEN, PIPELINE_SERVICE_URL, NEXT_PUBLIC_PIPELINE_SERVICE_URL, R2_*, DATA_DIR, PROJECT_ROOT, PYTHON_BIN, GROQ/OPENAI keys).
+- Created DEPLOYMENT.md — comprehensive step-by-step guide: Turso setup, R2 setup, Vercel deploy, laptop compute setup, Cloudflare Tunnel, verification, one-click launcher script, cost summary ($0/mo), troubleshooting.
+- Tested end-to-end:
+  - /api/voice-preview?voice=en-US-AndrewNeural → 200, 45KB, 80ms (proxied through mini-service, cached).
+  - Direct mini-service /preview/voice → 200, 54KB, 2ms (cached).
+  - Invalid voice → 400.
+  - Homepage + /api/stats + /api/jobs all still 200 (no regressions).
+  - Browser: voice preview button still works (click → fetch /api/voice-preview 200 → plays → auto-resets). No page errors.
+- Lint: exit 0. Python syntax: both scripts OK. Both services running.
+
+Stage Summary:
+- Code is now Vercel-ready with a fully free split architecture: Vercel (frontend+API, 24/7) + Turso (DB, 9 GB) + R2 (video storage, 10 GB) + laptop (compute, on-demand via Cloudflare Tunnel). Total cost: $0/mo.
+- 8 files modified (db.ts, paths.ts, socket.ts, 2x jobs routes, voice-preview route, mini-service index.ts + lib.ts), 3 files created (.env.example, DEPLOYMENT.md, pipeline/voice_preview.py already existed from task 4).
+- The Next.js layer is now 100% Python-free — voice previews proxy to the mini-service, so Vercel serverless functions work without Python.
+- All env vars have safe local defaults, so existing sandbox/laptop dev is unaffected.
+- Artifacts: DEPLOYMENT.md (full guide), .env.example (template), worklog.md updated.

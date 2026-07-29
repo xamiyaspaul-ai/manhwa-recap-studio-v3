@@ -7,8 +7,13 @@ import path from "path";
  *   - dataset/chapter_XXX/001.jpg ... summary.txt
  *   - work/ (pipeline temp files)
  *   - output/master_recap.mp4
+ *
+ * Env-configurable so you can point it at an external HDD on a laptop, or at
+ * a shared volume. Defaults to ./data (relative to cwd).
  */
-export const DATA_DIR = path.join(process.cwd(), "data");
+export const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(process.cwd(), "data");
 
 export function jobDir(jobId: string) {
   return path.join(DATA_DIR, "jobs", jobId);
