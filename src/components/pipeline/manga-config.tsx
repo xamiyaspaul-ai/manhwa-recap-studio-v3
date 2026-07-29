@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   ArrowLeft,
   Loader2,
@@ -12,6 +12,8 @@ import {
   Languages,
   Info,
   Clock,
+  Volume2,
+  Pause,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -123,6 +125,14 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Voice preview state
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const previewVoiceRef = useRef<string | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
+
   // Load saved settings + chapter feed on mount.
   useEffect(() => {
     (async () => {
@@ -208,6 +218,102 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
       setStarting(false);
     }
   }, [groqKey, voice, language, chapterLimit, translate, manga, onJobCreated]);
+
+  // --- Voice preview ---
+  // Fetches a short edge-tts sample for the selected voice and plays it.
+  // Toggles play/pause if the same voice is already loaded.
+  const handlePreview = useCallback(async () => {
+    // If we already have this voice loaded, just toggle play/pause.
+    if (audioRef.current && previewVoiceRef.current === voice) {
+      if (previewPlaying) {
+        audioRef.current.pause();
+        setPreviewPlaying(false);
+      } else {
+        try {
+          await audioRef.current.play();
+          setPreviewPlaying(true);
+        } catch {
+          setPreviewError("Playback failed — try again.");
+        }
+      }
+      return;
+    }
+
+    // Fetch a fresh preview for the current voice.
+    setPreviewLoading(true);
+    setPreviewError(null);
+    setPreviewPlaying(false);
+
+    // Stop + clean up any previously loaded audio.
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+
+    try {
+      const res = await fetch(`/api/voice-preview?voice=${encodeURIComponent(voice)}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Preview failed (${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      previewUrlRef.current = url;
+
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      previewVoiceRef.current = voice;
+
+      audio.onended = () => setPreviewPlaying(false);
+      audio.onerror = () => {
+        setPreviewError("Playback failed — the audio could not be decoded.");
+        setPreviewPlaying(false);
+      };
+
+      await audio.play();
+      setPreviewPlaying(true);
+    } catch (e) {
+      setPreviewError(
+        e instanceof Error ? e.message : "Failed to load voice preview."
+      );
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [voice, previewPlaying]);
+
+  // When the voice selection changes, stop any playing preview and reset state
+  // so the next Preview click fetches the new voice.
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+    previewVoiceRef.current = null;
+    setPreviewPlaying(false);
+    setPreviewError(null);
+  }, [voice]);
+
+  // Clean up audio + object URL on unmount.
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+        previewUrlRef.current = null;
+      }
+    };
+  }, []);
 
   return (
     <section className="max-w-5xl mx-auto space-y-6">
@@ -344,18 +450,55 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
             <Mic2 className="h-4 w-4 text-muted-foreground" />
             Narration voice
           </Label>
-          <Select value={voice} onValueChange={setVoice}>
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {VOICES.map((v) => (
-                <SelectItem key={v.value} value={v.value}>
-                  {v.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex gap-2 items-start">
+            <div className="flex-1">
+              <Select value={voice} onValueChange={setVoice}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {VOICES.map((v) => (
+                    <SelectItem key={v.value} value={v.value}>
+                      {v.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={handlePreview}
+              disabled={previewLoading}
+              className="flex-shrink-0 h-9 w-9"
+              title={previewLoading ? "Generating preview…" : previewPlaying ? "Stop preview" : "Preview voice"}
+              aria-label={previewLoading ? "Generating voice preview" : previewPlaying ? "Stop voice preview" : "Play voice preview"}
+            >
+              {previewLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : previewPlaying ? (
+                <Pause className="h-4 w-4" />
+              ) : (
+                <Volume2 className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
+          {previewError ? (
+            <p className="text-xs text-destructive flex items-center gap-1.5">
+              <Info className="h-3 w-3" />
+              {previewError}
+            </p>
+          ) : previewPlaying ? (
+            <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <Volume2 className="h-3 w-3 animate-pulse text-primary" />
+              Preview playing…
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Click the speaker icon to hear a sample of the selected voice.
+            </p>
+          )}
         </div>
 
         {/* Translate toggle */}

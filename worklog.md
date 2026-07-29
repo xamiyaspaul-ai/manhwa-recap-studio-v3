@@ -76,3 +76,49 @@ Stage Summary:
   3. No-text panels SHORTER: SILENT_FRAME_DURATION 6.0s → 2.0s (1s less than narrated MIN_FRAME_DURATION=3.0s). Test video 41.5s shorter, confirming the change.
 - Files modified: pipeline/master_pipeline.py (audio fades + timing constants + post-processing chain), src/components/pipeline/manga-config.tsx (55 voices), src/components/pipeline/video-result.tsx (voice label display).
 - Artifacts: qa-voice-options.png, qa-video-result-v3.png.
+
+---
+Task ID: 4
+Agent: Z.ai Code (main)
+Task: Add a voice preview option in the frontend so users can hear how a voice sounds before starting the pipeline.
+
+Work Log:
+- Created pipeline/voice_preview.py — a standalone Python helper that takes --voice and --output args and generates a ~4-7s edge-tts sample MP3 with a sample narration phrase ("Hello! I'll be narrating your manhwa recap video..."). Uses the same edge-tts engine as the main pipeline for accurate previews.
+- Created src/app/api/voice-preview/route.ts — Next.js API route (GET /api/voice-preview?voice={voiceId}) that:
+  1. Validates the voice ID format (regex: ^[a-z]{2}-[A-Z]{2}-[A-Za-z0-9]+Neural$).
+  2. Serves from cache (data/cache/voice-preview/{voice}.mp3) if available — instant.
+  3. Otherwise spawns Python voice_preview.py to generate, caches the result, and serves it as audio/mpeg with immutable cache headers.
+  4. Handles errors (invalid voice → 400, generation failure → 502).
+- Updated src/components/pipeline/manga-config.tsx:
+  - Added a speaker icon (Volume2) button next to the voice Select dropdown.
+  - Three states: idle (Volume2 icon + "Click the speaker icon to hear a sample" hint), loading (Loader2 spinner), playing (Pause icon + animated "Preview playing…" indicator).
+  - Full play/pause/resume toggle: click to play, click again to pause, click again to resume.
+  - Auto-resets when playback ends (onended callback).
+  - Auto-stops + resets when the user switches to a different voice (useEffect on voice change).
+  - Cleans up Audio object + object URLs on unmount (no memory leaks).
+  - Accessible: aria-label changes per state ("Play voice preview" / "Stop voice preview" / "Generating voice preview"), title attribute for tooltip.
+- API route tested via curl:
+  - First call (en-US-AndrewNeural): 200, 45KB, 1.0s (generates + caches).
+  - Second call (same voice): 200, 45KB, 0.008s (instant from cache — 125x faster).
+  - Different voice (en-GB-SoniaNeural): 200, 54KB, 4.2s (generates new).
+  - Invalid voice: 400 with clear error message.
+  - Cache directory: data/cache/voice-preview/ contains generated MP3s.
+- Browser-verified (agent-browser):
+  - Preview button renders next to voice dropdown with Volume2 icon.
+  - Click → fetches + plays audio (network: GET /api/voice-preview?voice=... 200).
+  - Button changes to Pause icon, "Preview playing…" text appears with animated pulse.
+  - Auto-resets to Play icon when playback finishes.
+  - Pause/resume toggle works (click → pause → Play icon, click → resume → Pause icon).
+  - Voice switch: changing the dropdown auto-stops the preview and resets (next click fetches the new voice).
+  - Tested with Brian Multilingual → Emma: both voices fetched correctly, different network requests.
+  - No page errors, no console errors.
+- Lint: exit 0 (0 errors, 0 warnings). Python syntax: OK.
+
+Stage Summary:
+- Voice preview feature fully implemented and verified end-to-end.
+- Architecture: frontend button → Next.js API route → Python edge-tts (same engine as pipeline) → cached MP3.
+- 55 voices available, each previewable with a single click. First preview generates in ~1-4s, subsequent previews of the same voice are instant (cached).
+- Files created: pipeline/voice_preview.py, src/app/api/voice-preview/route.ts.
+- Files modified: src/components/pipeline/manga-config.tsx (preview button + audio player + state management).
+- Artifacts: qa-voice-preview-idle.png, qa-voice-preview-playing.png, qa-voice-preview-emma.png.
+- Both services still running (:3000, :3001). Lint clean. No regressions.
