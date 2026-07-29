@@ -4,6 +4,7 @@ import path from "path";
 import { db } from "@/lib/db";
 import { outputVideoPath, fileExists } from "@/lib/paths";
 import { isR2Configured, getR2Url } from "@/lib/r2";
+import { restoreVideo } from "@/lib/archive";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +42,8 @@ export async function GET(
         outputDir: true,
         outputVideo: true,
         r2Key: true,
+        archiveProvider: true,
+        archiveFileId: true,
       },
     });
 
@@ -77,6 +80,32 @@ export async function GET(
       if (await fileExists(p)) {
         filePath = p;
         break;
+      }
+    }
+
+    if (!filePath) {
+      // ---- 2b. Cloud archive restore (GDrive / Mega) -------------------------
+      // Local file was freed after archiving — restore from cloud to a temp
+      // file, then stream it with Range support. Uses a 1-hour cache so repeat
+      // views don't re-download.
+      if (job.archiveProvider && job.archiveFileId) {
+        try {
+          const restoredPath = await restoreVideo(
+            job.archiveProvider,
+            job.archiveFileId,
+            job.id
+          );
+          filePath = restoredPath;
+        } catch (err) {
+          return NextResponse.json(
+            {
+              error: "Failed to restore video from cloud archive.",
+              provider: job.archiveProvider,
+              detail: err instanceof Error ? err.message : String(err),
+            },
+            { status: 502 }
+          );
+        }
       }
     }
 

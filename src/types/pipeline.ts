@@ -87,6 +87,9 @@ export interface JobSummary {
   doneImages: number;
   outputDir: string | null;
   outputVideo: string | null;
+  r2Key: string | null;
+  archiveProvider: string | null;
+  archiveFileId: string | null;
   error: string | null;
   voice: string;
   chapterLimit: number;

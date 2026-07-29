@@ -46,6 +46,9 @@ import {
   fileExists,
 } from './lib'
 import { isR2Configured, uploadFileToR2 } from './r2'
+import { google } from 'googleapis'
+import * as mega from 'megajs'
+import { createReadStream } from 'fs'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1168,6 +1171,112 @@ async function processJob(jobId: string): Promise<void> {
       }
     }
 
+    // -----------------------------
+    // Cloud archive: Google Drive (15 GB free) → Mega (20 GB free) fallback.
+    // Only runs if R2 didn't already handle the file (i.e. local file still
+    // exists). Uploads to GDrive first; if GDrive isn't configured / is full /
+    // fails, falls back to Mega. On success, deletes the local file.
+    // Controlled by AUTO_ARCHIVE env (default: "true"). Set to "false" to keep
+    // videos local.
+    // -----------------------------
+    let archiveProvider: string | null = null
+    let archiveFileId: string | null = null
+    const autoArchive = process.env.AUTO_ARCHIVE !== 'false'
+    if (autoArchive && r2Key === null) {
+      const localExists = await fileExists(outFile)
+      if (localExists) {
+        const gdriveOk = !!process.env.GDRIVE_CLIENT_ID &&
+          !!process.env.GDRIVE_CLIENT_SECRET &&
+          !!process.env.GDRIVE_REFRESH_TOKEN
+        const megaOk = !!process.env.MEGA_EMAIL && !!process.env.MEGA_PASSWORD
+
+        if (gdriveOk || megaOk) {
+          await emitLog(jobId, 'info', 'done', 'Archiving video to cloud storage (Google Drive / Mega)…')
+          try {
+            const safeTitle = (job.mangaTitle || 'recap').replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '')
+            const archiveName = `${safeTitle}_recap.mp4`
+
+            if (gdriveOk) {
+              try {
+                const oauth2 = new google.auth.OAuth2(
+                  process.env.GDRIVE_CLIENT_ID,
+                  process.env.GDRIVE_CLIENT_SECRET,
+                  'urn:ietf:wg:oauth:2.0:oob',
+                )
+                oauth2.setCredentials({ refresh_token: process.env.GDRIVE_REFRESH_TOKEN })
+                const drive = google.drive({ version: 'v3', auth: oauth2 })
+
+                // Check quota first.
+                const about = await drive.about.get({ fields: 'storageQuota' })
+                const q = about.data.storageQuota
+                const avail = Number(q?.limit || 15 * 1024 * 1024 * 1024) - Number(q?.usage || 0)
+                const stat = await fs.stat(outFile)
+                if (avail < stat.size + 1024 * 1024) {
+                  throw new Error(`Google Drive quota insufficient (${(avail / 1024 / 1024 / 1024).toFixed(1)} GB left)`)
+                }
+
+                const res = await drive.files.create({
+                  requestBody: { name: archiveName },
+                  media: { mimeType: 'video/mp4', body: createReadStream(outFile) },
+                  fields: 'id',
+                })
+                if (!res.data.id) throw new Error('GDrive upload returned no file ID')
+                archiveProvider = 'gdrive'
+                archiveFileId = res.data.id
+                await emitLog(jobId, 'success', 'done', `Uploaded to Google Drive (file ID: ${archiveFileId})`)
+              } catch (e) {
+                await emitLog(jobId, 'warn', 'done', `Google Drive upload failed, trying Mega: ${e instanceof Error ? e.message : e}`)
+              }
+            }
+
+            // Mega fallback (or primary if GDrive not configured).
+            if (!archiveFileId && megaOk) {
+              await new Promise<void>((resolve, reject) => {
+                const s = mega.Storage({
+                  email: process.env.MEGA_EMAIL,
+                  password: process.env.MEGA_PASSWORD,
+                  autoload: true,
+                })
+                s.on('ready', () => {
+                  try {
+                    const uploadStream = s.upload(archiveName)
+                    createReadStream(outFile).pipe(uploadStream)
+                    uploadStream.on('complete', () => {
+                      try {
+                        archiveProvider = 'mega'
+                        archiveFileId = (uploadStream as any).link()
+                        resolve()
+                      } catch (err) {
+                        reject(err)
+                      }
+                    })
+                    uploadStream.on('error', (err: Error) => reject(err))
+                  } catch (err) {
+                    reject(err)
+                  }
+                })
+                s.on('error', (err: Error) => reject(err))
+              })
+              await emitLog(jobId, 'success', 'done', `Uploaded to Mega (share URL stored)`)
+            }
+
+            // Delete local file after successful upload.
+            if (archiveFileId) {
+              await fs.rm(outFile, { force: true })
+              await emitLog(jobId, 'info', 'done', 'Local video file freed after cloud upload')
+            }
+          } catch (e) {
+            await emitLog(
+              jobId,
+              'warn',
+              'done',
+              `Cloud archive failed, keeping local copy: ${e instanceof Error ? e.message : e}`,
+            )
+          }
+        }
+      }
+    }
+
     await db.job.update({
       where: { id: jobId },
       data: {
@@ -1178,6 +1287,8 @@ async function processJob(jobId: string): Promise<void> {
         outputDir: outputDir(jobId),
         outputVideo: outName,
         r2Key,
+        archiveProvider,
+        archiveFileId,
       },
     })
     await emitLog(jobId, 'success', 'done', `Pipeline complete. Output: ${outName}`)

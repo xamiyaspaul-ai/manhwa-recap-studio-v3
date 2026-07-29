@@ -162,3 +162,40 @@ Stage Summary:
 - The Next.js layer is now 100% Python-free — voice previews proxy to the mini-service, so Vercel serverless functions work without Python.
 - All env vars have safe local defaults, so existing sandbox/laptop dev is unaffected.
 - Artifacts: DEPLOYMENT.md (full guide), .env.example (template), worklog.md updated.
+
+---
+Task ID: 6
+Agent: Z.ai Code (main)
+Task: Build a Google Drive + Mega storage combo for auto-archiving finished videos (both free, auto-fallback).
+
+Work Log:
+- Installed googleapis + megajs (+ @types/megajs) in both root and mini-service.
+- Added archiveProvider + archiveFileId fields to the Job model in prisma/schema.prisma (both root + mini-service copies). db:push applied.
+- Created src/lib/gdrive.ts: Google Drive helper with OAuth2 refresh-token auth. uploadToGDrive (stream upload via drive.files.create), downloadFromGDrive (stream download), getGDriveQuota (checks free space before upload). isGDriveConfigured() checks env vars.
+- Created src/lib/mega-storage.ts: Mega helper using megajs. uploadToMega (login with email/password, stream upload, returns share URL with embedded decryption key). downloadFromMega (anonymous download from share URL — no login needed). isMegaConfigured() checks env vars.
+- Created src/lib/archive.ts: orchestrator. archiveVideo() tries GDrive first (checks quota → upload); if GDrive fails/full/unconfigured, falls back to Mega. restoreVideo() downloads from cloud to a temp cache file (1-hour TTL) so repeat views don't re-download. cleanupRestoreCache() removes stale temp files.
+- Updated src/app/api/download/[id]/route.ts: if local file is gone but archiveProvider+archiveFileId exist, calls restoreVideo() to fetch from cloud → streams with full Range support via the temp file. Handles GDrive and Mega transparently.
+- Created src/app/api/jobs/[id]/archive/route.ts: POST endpoint for manual archiving. Returns existing archive info if already archived; uploads + deletes local file otherwise.
+- Updated src/lib/serialize.ts + src/types/pipeline.ts: added r2Key, archiveProvider, archiveFileId to the JobSummary type + serialization.
+- Integrated auto-archive into mini-services/pipeline-service/index.ts: after a job completes, if R2 didn't handle the file (no r2Key) and AUTO_ARCHIVE !== "false", uploads to GDrive (quota check first) → Mega fallback → deletes local file. Logs each step via emitLog. Stores archiveProvider + archiveFileId in the Job row.
+- Updated src/components/pipeline/video-result.tsx: shows "Local storage" badge when not archived, "Google Drive"/"Mega" badge when archived. "Archive to cloud" button (with loading spinner) triggers manual POST /api/jobs/{id}/archive. Toast notification on success/failure.
+- Created scripts/gdrive-auth.ts: one-time OAuth2 setup script. Prints an authorization URL → user pastes the code → prints the refresh token to add to .env. Includes step-by-step GCP setup instructions in the header comment.
+- Updated .env.example: documented GDRIVE_CLIENT_ID/SECRET/REFRESH_TOKEN, MEGA_EMAIL/PASSWORD, AUTO_ARCHIVE with setup instructions.
+- Fixed megajs ESM import issue (no default export → use namespace import `import * as mega`).
+- Tested end-to-end:
+  - POST /api/jobs/{id}/archive without creds → 500 "All archive providers failed" (graceful).
+  - GET /api/download/{id} → still 206 (no regression to video streaming).
+  - Homepage + /api/jobs → 200.
+  - Browser: "Local storage" badge + "Archive to cloud" button render in the video result panel. Clicking the button → error toast "Archive failed" (no creds). No page errors.
+- Lint: exit 0. Both services running.
+
+Stage Summary:
+- Google Drive (15 GB free) + Mega (20 GB free) dual-provider auto-archive is fully implemented = 35 GB of free automatable cloud storage (~50 videos).
+- Flow: job completes → auto-uploads to GDrive (quota-checked) → if full/fails, falls back to Mega → local file deleted → disk freed.
+- Playback: download route transparently restores from cloud (GDrive or Mega) to a 1-hour temp cache, streams with Range support → video plays/seeks normally even when local file is gone.
+- Manual archive: "Archive to cloud" button in the video result UI.
+- Setup: run `bun run scripts/gdrive-auth.ts` once for GDrive OAuth; set MEGA_EMAIL/PASSWORD for Mega. Both documented in .env.example.
+- Files created: src/lib/gdrive.ts, src/lib/mega-storage.ts, src/lib/archive.ts, src/app/api/jobs/[id]/archive/route.ts, scripts/gdrive-auth.ts.
+- Files modified: prisma/schema.prisma (+mini-service copy), src/lib/serialize.ts, src/types/pipeline.ts, src/app/api/download/[id]/route.ts, mini-services/pipeline-service/index.ts, src/components/pipeline/video-result.tsx, .env.example.
+- Artifacts: qa-archive-ui.png, qa-archive-error-toast.png.
+- Both services running (:3000, :3001). Lint clean. No regressions.

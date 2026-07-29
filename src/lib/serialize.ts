@@ -37,6 +37,9 @@ type JobRow = {
   doneImages: number;
   outputDir: string | null;
   outputVideo: string | null;
+  r2Key: string | null;
+  archiveProvider: string | null;
+  archiveFileId: string | null;
   error: string | null;
   groqKey: string | null;
   openaiKey: string | null;
@@ -84,6 +87,9 @@ export function mapJob(job: JobRow): JobSummary {
     doneImages: job.doneImages,
     outputDir: job.outputDir,
     outputVideo: job.outputVideo,
+    r2Key: (job as any).r2Key ?? null,
+    archiveProvider: (job as any).archiveProvider ?? null,
+    archiveFileId: (job as any).archiveFileId ?? null,
     error: job.error,
     voice: job.voice,
     chapterLimit: job.chapterLimit,

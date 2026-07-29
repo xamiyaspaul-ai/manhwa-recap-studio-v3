@@ -50,6 +50,8 @@ model Job {
   outputDir   String?   // where the final mp4 lives
   outputVideo String?   // final mp4 file name
   r2Key       String?   // Cloudflare R2 object key, if uploaded (local file is freed once set)
+  archiveProvider String? // "gdrive" | "mega" | null — cloud archive provider
+  archiveFileId   String? // Google Drive file ID, or Mega share URL (https://mega.nz/file/...#...)
   error       String?
   groqKey     String?   // per-job Groq api key (user-provided)
   openaiKey   String?   // per-job OpenAI api key (optional)

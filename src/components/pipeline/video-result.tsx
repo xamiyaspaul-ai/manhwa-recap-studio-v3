@@ -1,6 +1,7 @@
 "use client";
 
-import { Download, Film, CheckCircle2, Share2, Image as ImageIcon, BookOpen, Clock } from "lucide-react";
+import { useState } from "react";
+import { Download, Film, CheckCircle2, Share2, Image as ImageIcon, BookOpen, Clock, Cloud, CloudUpload, Loader2, HardDrive } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { JobSummary } from "@/types/pipeline";
@@ -12,6 +13,10 @@ interface VideoResultProps {
 
 export function VideoResult({ job }: VideoResultProps) {
   const { toast } = useToast();
+  const [archiving, setArchiving] = useState(false);
+  const [archiveProvider, setArchiveProvider] = useState<string | null>(
+    job.archiveProvider ?? null
+  );
 
   const handleShare = async () => {
     const url = `${window.location.origin}/api/download/${job.id}`;
@@ -24,6 +29,30 @@ export function VideoResult({ job }: VideoResultProps) {
       }
     } catch {
       // user cancelled share
+    }
+  };
+
+  const handleArchive = async () => {
+    setArchiving(true);
+    try {
+      const res = await fetch(`/api/jobs/${job.id}/archive`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || `Archive failed (${res.status})`);
+      }
+      setArchiveProvider(data.provider);
+      toast({
+        title: "Archived to cloud",
+        description: `Video uploaded to ${data.provider === "gdrive" ? "Google Drive" : "Mega"} and local file freed.`,
+      });
+    } catch (e) {
+      toast({
+        title: "Archive failed",
+        description: e instanceof Error ? e.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setArchiving(false);
     }
   };
 
@@ -42,9 +71,17 @@ export function VideoResult({ job }: VideoResultProps) {
             <p className="text-xs text-emerald-400/60">Pipeline completed successfully</p>
           </div>
         </div>
-        <Badge variant="outline" className="border-emerald-500/30 text-emerald-400">
-          100% Complete
-        </Badge>
+        <div className="flex items-center gap-2">
+          {archiveProvider && (
+            <Badge variant="outline" className="border-sky-500/30 text-sky-400 gap-1">
+              <Cloud className="h-3 w-3" />
+              {archiveProvider === "gdrive" ? "Google Drive" : "Mega"}
+            </Badge>
+          )}
+          <Badge variant="outline" className="border-emerald-500/30 text-emerald-400">
+            100% Complete
+          </Badge>
+        </div>
       </div>
 
       {/* Video player */}
@@ -75,6 +112,19 @@ export function VideoResult({ job }: VideoResultProps) {
             {job.voice.replace(/^[a-z]{2}-[A-Z]{2}-/, "").replace(/Neural$/, "").replace(/Multilingual$/, " ML")}
           </span>
         </div>
+        {archiveProvider ? (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-500/10 border border-sky-500/30">
+            <Cloud className="h-3.5 w-3.5 text-sky-400" />
+            <span className="text-xs font-medium text-sky-400">
+              Archived to {archiveProvider === "gdrive" ? "Google Drive" : "Mega"}
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-card/50 border border-border">
+            <HardDrive className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-xs font-medium text-muted-foreground">Local storage</span>
+          </div>
+        )}
       </div>
 
       {/* Action buttons */}
@@ -95,10 +145,26 @@ export function VideoResult({ job }: VideoResultProps) {
           <Share2 className="h-5 w-5 mr-2" />
           Share
         </Button>
+        {!archiveProvider && (
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={handleArchive}
+            disabled={archiving}
+          >
+            {archiving ? (
+              <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+            ) : (
+              <CloudUpload className="h-5 w-5 mr-2" />
+            )}
+            {archiving ? "Archiving…" : "Archive to cloud"}
+          </Button>
+        )}
       </div>
 
       <p className="text-xs text-muted-foreground">
         Video includes narrated chapter summaries with text-to-speech audio. Source: {job.mangaTitle} · {job.totalChapters} chapters · {job.totalImages} images.
+        {archiveProvider && " Local file freed after cloud upload — video streams from cloud on demand."}
       </p>
     </div>
   );
