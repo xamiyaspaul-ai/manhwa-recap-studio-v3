@@ -1099,9 +1099,9 @@ export async function generateImageNarrations(
         // fail the same way and just trigger 429 rate limits).
         if (isContentFilter) {
           console.warn(
-            `[VLM:${providerLabel}] batch ${num}/${totalBatches} hit content filter — using placeholder text for ${images.length} panels`,
+            `[VLM:${providerLabel}] batch ${num}/${totalBatches} hit content filter — leaving ${images.length} panels silent (no text)`,
           )
-          batchTexts = images.map(() => 'The scene continues to unfold.')
+          batchTexts = images.map(() => '')
           succeeded = true
         } else {
           // Non-content-filter error — fall back to single-image calls.
@@ -1115,7 +1115,7 @@ export async function generateImageNarrations(
               batchTexts.push(await narrateSingleImage(imgPath))
             } catch (e) {
               console.error(`[VLM:${providerLabel}] single-image fallback failed for ${path.basename(imgPath)}:`, e)
-              batchTexts.push('The scene continues to unfold.')
+              batchTexts.push('')
             }
             completedPanels++
             reportProgress()

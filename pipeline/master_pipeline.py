@@ -1536,12 +1536,14 @@ def get_audio_duration(path: Path) -> float:
 
 
 def _generate_silence(path: Path, duration: float) -> None:
+    # Output as WAV (not MP3) to avoid encoder delay/padding that causes
+    # sync drift when concatenated. WAV is raw PCM — sample-accurate.
     run_ffmpeg(
         [
             "ffmpeg", "-y", "-f", "lavfi",
             "-i", f"anullsrc=r={AUDIO_SAMPLE_RATE}:cl=mono",
             "-t", f"{duration:.3f}",
-            "-b:a", AUDIO_BITRATE,
+            "-ar", str(AUDIO_SAMPLE_RATE), "-ac", "1",
             str(path),
         ]
     )
@@ -1555,7 +1557,10 @@ def synthesize_segment_audio(cfg: PipelineConfig, chapter: Chapter, tag: str, te
     per-word synthesis introduced."""
     seg_audio_dir = cfg.temp_audio_dir / chapter.tag
     seg_audio_dir.mkdir(parents=True, exist_ok=True)
-    final_path = seg_audio_dir / f"{tag}.mp3"
+    # Output WAV (not MP3) — WAV has no encoder delay/padding, so concatenation
+    # is sample-accurate. This eliminates the audio/video sync drift that
+    # accumulated in the second half of videos when using MP3 intermediates.
+    final_path = seg_audio_dir / f"{tag}.wav"
     if final_path.exists():
         return final_path
 
@@ -1599,11 +1604,13 @@ def synthesize_segment_audio(cfg: PipelineConfig, chapter: Chapter, tag: str, te
             f"afade=t=in:st=0:d={SEGMENT_FADE_IN},"
             f"afade=t=out:st={fade_out_start:.3f}:d={SEGMENT_FADE_OUT}"
         )
+        # Convert edge-tts MP3 → WAV with fades. WAV output = no encoder
+        # delay/padding = sample-accurate concatenation later.
         run_ffmpeg(
             [
                 "ffmpeg", "-y", "-i", str(raw_path),
                 "-af", seg_af,
-                "-ar", str(AUDIO_SAMPLE_RATE), "-b:a", AUDIO_BITRATE,
+                "-ar", str(AUDIO_SAMPLE_RATE), "-ac", "1",
                 str(final_path),
             ]
         )
@@ -1621,7 +1628,7 @@ def build_chapter_audio_track(cfg: PipelineConfig, chapter: Chapter, segment_aud
     Because each input clip is now a full continuous utterance (not a lone
     word), the only joins left are the natural breath-like gaps between
     panels/scenes — not mid-sentence chops. Resumable."""
-    out_path = cfg.temp_audio_dir / f"{chapter.tag}.mp3"
+    out_path = cfg.temp_audio_dir / f"{chapter.tag}.mp3"  # final output still MP3 (re-encoded from WAV, so no padding issues)
     if out_path.exists():
         log.info("[%s] chapter audio track already assembled — skipping", chapter.tag)
         return out_path
@@ -1631,7 +1638,10 @@ def build_chapter_audio_track(cfg: PipelineConfig, chapter: Chapter, segment_aud
         for p in segment_audio_paths:
             f.write(f"file '{p.resolve().as_posix()}'\n")
 
-    # First: raw concat (stream copy).
+    # First: raw concat (stream copy). WAV files have no encoder delay/padding,
+    # so concatenation with -c copy is sample-accurate — no sync drift.
+    # (Previously this used MP3 intermediates, whose encoder delay/padding
+    # accumulated across 17+ segments and caused audio to drift ahead of video.)
     raw_path = cfg.temp_audio_dir / f"{chapter.tag}_raw.mp3"
     run_ffmpeg(
         [
@@ -1838,14 +1848,14 @@ def pad_audio_with_silence(audio_path: Path, target_duration: float) -> Path:
     if current >= target_duration:
         return audio_path
     padding_dur = target_duration - current
-    out = audio_path.with_suffix('.padded.mp3')
+    out = audio_path.with_suffix('.padded.wav')
     run_ffmpeg([
         "ffmpeg", "-y",
         "-i", str(audio_path),
         "-f", "lavfi", "-i", f"anullsrc=r={AUDIO_SAMPLE_RATE}:cl=mono",
         "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1",
         "-t", f"{target_duration:.3f}",
-        "-ar", str(AUDIO_SAMPLE_RATE), "-b:a", AUDIO_BITRATE,
+        "-ar", str(AUDIO_SAMPLE_RATE), "-ac", "1",
         str(out),
     ])
     log.debug("Padded %s from %.1fs to %.1fs (+%.1fs silence)",
