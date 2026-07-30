@@ -224,3 +224,25 @@ Stage Summary:
 - Google Drive fully removed; Mega (20 GB free) is the sole cloud archive provider.
 - All changes pushed to https://github.com/zainrana558/manhwa-recap-studio-v3 (main branch, commit 2da12a2).
 - Working tree clean. Remote URL secured (no PAT embedded).
+
+---
+Task ID: 8
+Agent: Z.ai Code (main)
+Task: Create Hugging Face Spaces Docker deployment (free 24/7 hosting, no laptop needed).
+
+Work Log:
+- Created Dockerfile: Ubuntu 22.04 base with Python 3 + torch CPU + ultralytics + opencv-python-headless + edge-tts + ffmpeg + bun. Pre-downloads YOLO model during build. Builds Next.js standalone output. Configures /data persistent volume for DB + video storage.
+- Created reverse-proxy config: listens on port 7860 (HF Spaces default), routes XTransformPort=3001 to pipeline-service, everything else to Next.js (port 3000). Validated syntax.
+- Created start-hf.sh: entry point that runs db:push, starts pipeline-service (port 3001), starts Next.js standalone server (port 3000), starts reverse proxy (port 7860). Includes graceful shutdown. Shell syntax validated.
+- Created .dockerignore: excludes node_modules, .next, data, db, logs, screenshots, .env, .git from Docker build context.
+- Created README.md with HF Spaces YAML front matter (sdk: docker, app_port: 7860, colorFrom: green, colorTo: purple).
+- Verified: config valid, shell script syntax OK, lint clean (0 errors).
+- Pushed to GitHub (commit 1ad49f7). Remote URL secured.
+
+Stage Summary:
+- Full Docker deployment ready for Hugging Face Spaces.
+- One container runs everything: Next.js + Python pipeline + socket.io + reverse proxy + SQLite.
+- No env vars required to start. Optional: MEGA_EMAIL/PASSWORD (cloud archive), GROQ_API_KEY (better narration).
+- Free tier: 16 GB RAM, 50 GB storage, 24/7 online, public URL.
+- Files: Dockerfile, Caddyfile.docker, start-hf.sh, .dockerignore, README.md.
+- Pushed to https://github.com/zainrana558/manhwa-recap-studio-v3 (commit 1ad49f7).
