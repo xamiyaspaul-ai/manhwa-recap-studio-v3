@@ -1640,9 +1640,9 @@ def build_chapter_audio_track(cfg: PipelineConfig, chapter: Chapter, segment_aud
 
     # First: raw concat (stream copy). WAV files have no encoder delay/padding,
     # so concatenation with -c copy is sample-accurate — no sync drift.
-    # (Previously this used MP3 intermediates, whose encoder delay/padding
-    # accumulated across 17+ segments and caused audio to drift ahead of video.)
-    raw_path = cfg.temp_audio_dir / f"{chapter.tag}_raw.mp3"
+    # Output MUST be WAV (not MP3) because -c copy can't put PCM into an MP3
+    # container without re-encoding. The loudnorm step below re-encodes to MP3.
+    raw_path = cfg.temp_audio_dir / f"{chapter.tag}_raw.wav"
     run_ffmpeg(
         [
             "ffmpeg", "-y", "-f", "concat", "-safe", "0",

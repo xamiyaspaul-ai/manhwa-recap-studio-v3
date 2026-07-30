@@ -953,17 +953,17 @@ export async function generateImageNarrations(
   // transcription time ~4-5x. Configurable via VLM_CONCURRENCY env var
   // (default 4). Each batch writes to disjoint indices in the results array
   // so there are no race conditions. If a batch call fails or returns
-  // unparseable output, we fall back to single-image calls for just that
-  // batch's panels (so no panel is permanently lost).
-  const BATCH_SIZE = 6
-  // Concurrency: 3 batches at a time = 18 panels transcribing in parallel.
-  // Default 3 (not higher) because z-ai's free VLM tier rate-limits (429) when
-  // too many calls overlap — especially when a batch fails and triggers 6
-  // single-image fallback calls on top of the running batches. 3 is the sweet
-  // spot: ~3x speedup with minimal 429 retries. Tune via VLM_CONCURRENCY env.
+  // BATCH_SIZE: number of panel images sent per VLM API call. Higher = fewer
+  // API calls = less rate-limit pressure + faster overall. 10 is a good balance
+  // — most VLM APIs accept up to ~16 images per call, but 10 keeps response
+  // times reasonable and avoids token-limit truncation.
+  const BATCH_SIZE = 10
+  // Concurrency: 4 batches at a time = 40 panels transcribing in parallel.
+  // Safe now that single-image fallback is removed (no more 429 storms from
+  // 6× retries per failed batch). Tune via VLM_CONCURRENCY env.
   const CONCURRENCY = Math.max(
     1,
-    Math.min(6, parseInt(process.env.VLM_CONCURRENCY || '3', 10)),
+    Math.min(8, parseInt(process.env.VLM_CONCURRENCY || '4', 10)),
   )
 
   // Build the list of batches to process.
@@ -1095,33 +1095,17 @@ export async function generateImageNarrations(
       }
 
       if (!succeeded) {
-        // Content-filter: use placeholder text (single-image calls would
-        // fail the same way and just trigger 429 rate limits).
-        if (isContentFilter) {
-          console.warn(
-            `[VLM:${providerLabel}] batch ${num}/${totalBatches} hit content filter — leaving ${images.length} panels silent (no text)`,
-          )
-          batchTexts = images.map(() => '')
-          succeeded = true
-        } else {
-          // Non-content-filter error — fall back to single-image calls.
-          console.warn(
-            `[VLM:${providerLabel}] batch ${num}/${totalBatches} failed (${errMsg.slice(0, 80)}) — falling back to single-image calls`,
-          )
-          batchTexts = []
-          countedPerImage = true
-          for (const imgPath of images) {
-            try {
-              batchTexts.push(await narrateSingleImage(imgPath))
-            } catch (e) {
-              console.error(`[VLM:${providerLabel}] single-image fallback failed for ${path.basename(imgPath)}:`, e)
-              batchTexts.push('')
-            }
-            completedPanels++
-            reportProgress()
-          }
-          succeeded = true
-        }
+        // All providers failed for this batch. Use empty text (silence) for
+        // all panels. Previously this fell back to 6 single-image calls per
+        // batch — but those got 429'd individually (6 × 5 retries × 8s backoff
+        // = ~240s per failed batch), making transcription take forever.
+        // Empty text = silence during that panel, which is the correct
+        // behavior for panels with no readable text anyway.
+        console.warn(
+          `[VLM:${providerLabel}] batch ${num}/${totalBatches} failed on all providers — leaving ${images.length} panels silent`,
+        )
+        batchTexts = images.map(() => '')
+        succeeded = true
       }
     }
 
