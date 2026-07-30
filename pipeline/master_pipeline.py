@@ -1691,7 +1691,7 @@ def build_chapter_audio_track(cfg: PipelineConfig, chapter: Chapter, segment_aud
         )
         shutil.copy2(raw_path, out_path)
     raw_path.unlink(missing_ok=True)
-    log.info("[%s] assembled + post-processed chapter audio (compressor+EQ+loudnorm) -> %s", chapter.tag, out_path.name)
+    log.info("[%s] assembled + post-processed chapter audio (loudnorm) -> %s", chapter.tag, out_path.name)
     return out_path
 
 
@@ -1869,7 +1869,7 @@ def pad_audio_with_silence(audio_path: Path, target_duration: float) -> Path:
 
 def run_ffmpeg(cmd: List[str]) -> None:
     log.debug("Running: %s", " ".join(cmd))
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=600)
     if result.returncode != 0:
         log.error("ffmpeg command failed:\n%s", result.stdout)
         raise RuntimeError(f"ffmpeg failed (exit {result.returncode}): {' '.join(cmd)}")
@@ -2076,7 +2076,16 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             chapter_offset += duration
 
         # Build final per-frame durations from the timings.
-        frame_durations = [end - start for start, end in frame_timing]
+        # Guard against None entries (can happen if a segment had no positions
+        # or an error left a frame_timing slot unpopulated). Default to
+        # MIN_FRAME_DURATION so the video never has a zero-duration frame.
+        frame_durations = []
+        for t in frame_timing:
+            if t is not None:
+                frame_durations.append(t[1] - t[0])
+            else:
+                frame_durations.append(MIN_FRAME_DURATION)
+                log.warning("[%s] frame_timing had None entry — using MIN_FRAME_DURATION (%.1fs)", chapter.tag, MIN_FRAME_DURATION)
 
         cfg.write_progress("render", chapter.index - 1, total,
                            f"Chapter {chapter.index}/{total}: building audio track")

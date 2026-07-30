@@ -13,9 +13,12 @@ type CellStatus = "pending" | "scraping" | "scraped" | "summarizing" | "summariz
 
 function getCellStatus(c: ChapterInfo): CellStatus {
   if (c.status === "error") return "error";
-  if (c.rendered) return "rendered";
-  if (c.summarized) return "summarized";
+  if (c.status === "done" || c.rendered) return "rendered";
+  if (c.status === "rendering") return "rendering";
+  if (c.summarized || c.status === "summarized") return "summarized";
+  if (c.status === "summarizing") return "summarizing";
   if (c.status === "scraped") return "scraped";
+  if (c.status === "scraping") return "scraping";
   return "pending";
 }
 
@@ -33,8 +36,11 @@ const statusConfig: Record<CellStatus, { color: string; icon: typeof Clock; labe
 
 const LEGEND_ITEMS = [
   { status: "pending" as CellStatus, label: "Pending" },
+  { status: "scraping" as CellStatus, label: "Scraping" },
   { status: "scraped" as CellStatus, label: "Scraped" },
+  { status: "summarizing" as CellStatus, label: "Transcribing" },
   { status: "summarized" as CellStatus, label: "Transcribed" },
+  { status: "rendering" as CellStatus, label: "Rendering" },
   { status: "rendered" as CellStatus, label: "Rendered" },
   { status: "error" as CellStatus, label: "Error" },
 ];

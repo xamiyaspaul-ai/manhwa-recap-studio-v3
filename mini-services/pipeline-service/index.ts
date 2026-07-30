@@ -1337,7 +1337,40 @@ httpServer.listen(PORT, async () => {
   // pipeline-service was down) and enqueue them for processing. Without this,
   // a job created while the service was restarting would stay at "pending"
   // forever — appearing as "stuck" in the UI.
+  // Also requeue jobs stuck in active states (scraping/rendering/etc.) that
+  // were interrupted when the service crashed/restarted. These are reset to
+  // "pending" so the pipeline picks them up fresh.
   try {
+    // First, reset stuck active jobs to "pending" so they get re-processed.
+    const STUCK_STATUSES = ['scraping', 'summarizing', 'translating', 'rendering', 'merging']
+    const stuckJobs = await db.job.findMany({
+      where: { status: { in: STUCK_STATUSES } },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, status: true },
+    })
+    if (stuckJobs.length > 0) {
+      console.log(`[pipeline-service] found ${stuckJobs.length} stuck job(s) (interrupted mid-processing) — resetting to pending`)
+      for (const j of stuckJobs) {
+        await db.job.update({
+          where: { id: j.id },
+          data: {
+            status: 'pending',
+            stage: null,
+            message: 'Job was interrupted — automatically re-queued on service restart.',
+          },
+        })
+        await db.jobLog.create({
+          data: {
+            jobId: j.id,
+            level: 'warn',
+            stage: 'search',
+            message: `Job was stuck in '${j.status}' state — reset to pending on service restart.`,
+          },
+        })
+      }
+    }
+
+    // Now requeue all pending jobs (including the ones we just reset).
     const pendingJobs = await db.job.findMany({
       where: { status: 'pending' },
       orderBy: { createdAt: 'asc' },

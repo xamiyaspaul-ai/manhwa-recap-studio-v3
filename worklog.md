@@ -246,3 +246,149 @@ Stage Summary:
 - Free tier: 16 GB RAM, 50 GB storage, 24/7 online, public URL.
 - Files: Dockerfile, Caddyfile.docker, start-hf.sh, .dockerignore, README.md.
 - Pushed to https://github.com/zainrana558/manhwa-recap-studio-v3 (commit 1ad49f7).
+
+---
+Task ID: audit-1
+Agent: Bug Auditor
+Task: Audit codebase for bugs and issues
+
+Work Log:
+- Audited src/app/api/** (jobs, jobs/[id], jobs/[id]/archive, jobs/[id]/logs, download/[id], voice-preview, search, manga/[id], stats, settings, bgm, preview/[id]/[chapter]/[page], route).
+- Audited src/components/pipeline/** (manga-config, video-result, job-progress, log-stream, chapter-grid, job-history, search-section, stats-bar, how-it-works, trending-searches).
+- Audited src/lib/** (db, paths, socket, serialize, r2, archive, mega-storage, manga-search, scrapers, mangadex [dead], mangahere [dead], utils).
+- Audited src/hooks/** (use-job-progress, use-toast, use-mobile).
+- Audited mini-services/pipeline-service/index.ts + lib.ts + r2.ts.
+- Audited pipeline/master_pipeline.py (2318 lines).
+- Audited src/app/page.tsx (root page wiring).
+
+Stage Summary:
+
+== CRITICAL ==
+
+1. **mini-services/pipeline-service/index.ts:565, 1313, 1319, 158** — `spawnSync` blocks the Node.js event loop. The slice step (line 565) has a 10-minute timeout, the voice preview (line 158) blocks up to 25s, and the Python dep check (lines 1313, 1319) can block up to 130s. During these windows the entire service is unresponsive: no socket.io events fire, no HTTP requests are served, no progress polling runs. For a service whose primary job is live-streaming pipeline progress, this is the most serious issue. Fix: replace `spawnSync` with `spawn` (async) + `await` on the child exit event; for the dep check, run it once at boot in the background.
+
+== HIGH ==
+
+2. **mini-services/pipeline-service/index.ts:1319** — Hardcoded `/home/z/my-project/pipeline/requirements.txt` path. Breaks on Vercel/HF Spaces/laptop where PROJECT_ROOT differs. Fix: use `path.join(PROJECT_ROOT, 'pipeline', 'requirements.txt')`.
+
+3. **mini-services/pipeline-service/index.ts:712-715** — On resume, when a downloaded image file already exists, `downloaded++` is incremented but `doneImages++` is NOT. Progress count is wrong on retry. Fix: also increment `doneImages` in the skip branch.
+
+4. **mini-services/pipeline-service/index.ts:1184-1235** — Race condition: after a job completes, the service auto-archives to Mega. If the user clicks the "Archive to cloud" button in the UI at the same time, both uploads race on the same file. Fix: check `job.archiveProvider` in the manual archive route OR add a DB-level "archiving" lock.
+
+5. **mini-services/pipeline-service/index.ts:1340-1354** — Auto-requeue on startup only re-enqueues jobs with status="pending". Jobs that crashed mid-flight (status="scraping"/"summarizing"/"rendering") are NOT re-enqueued and stay in that status forever, appearing stuck in the UI. Fix: also requeue jobs in active statuses, resetting them to "pending".
+
+6. **pipeline/master_pipeline.py:966** — `_detect_panels_yolo` loads the YOLO model on EVERY call (`model = YOLO(model_path)`). For a chapter with 30 images, the model is loaded 30 times — massive perf hit. Fix: cache the model in a module-level variable (lazy init).
+
+7. **pipeline/master_pipeline.py:1872** — `run_ffmpeg` uses `subprocess.run` without `timeout=`. If ffmpeg hangs (rare but possible for corrupted inputs), the entire pipeline hangs forever and the service can't kill it. Fix: add `timeout=600` (10 min) parameter and catch `subprocess.TimeoutExpired`.
+
+8. **pipeline/master_pipeline.py:2048-2079** — `frame_timing = [None] * len(frame_paths)`. If a frame position is not in any segment's `positions` list (e.g., frame_sources has an index missing from panel_narrations), `frame_timing[pos]` stays None and `frame_durations = [end - start for start, end in frame_timing]` throws `TypeError: cannot unpack non-iterable NoneType`. Fix: default missing entries to a silent `(0, SILENT_FRAME_DURATION)` tuple, or filter out orphan frames before timing.
+
+9. **src/components/pipeline/chapter-grid.tsx:14-20** — `getCellStatus` doesn't handle active statuses ("scraping", "summarizing", "rendering"). Chapters in these states always show as "Pending" (gray clock). The `statusConfig` map has entries for these states but they're never used. Fix: check `c.status === "scraping"`/`"summarizing"`/`"rendering"` before the fallback.
+
+10. **src/app/api/download/[id]/route.ts:147, 155** — `fs.readFile(filePath)` loads the entire 72MB+ video into RAM before responding (for the no-Range / unparseable-Range cases). On Vercel serverless (1GB function memory cap) this is a memory issue and slow. Fix: use `createReadStream` + `Readable.toWeb` like the preview route does.
+
+11. **src/app/api/jobs/route.ts:193** — Fire-and-forget POST to `/internal/start` has a 5s timeout (line 26). If the pipeline-service is briefly slow (e.g., processing another job's spawnSync), the start signal is lost and the job stays "pending" forever. User must manually click Retry. Fix: increase timeout to 15s + add a fallback DB-poll requeue on the service side, OR have the service auto-requeue pending jobs on startup (already done — but only "pending", not lost signals).
+
+== MEDIUM ==
+
+12. **src/app/api/bgm/route.ts:46, 61** — POST has no file size limit; entire file loaded into RAM via `arrayBuffer()`. Content-type check (line 46) is bypassable if `file.type` is empty/missing. A large or malicious upload could OOM the server. Fix: enforce a max size (e.g., 50MB) by checking `file.size` before reading; require extension match even if MIME is missing.
+
+13. **src/app/api/bgm/route.ts:84** — Path traversal check `name.includes("/") || name.includes("..")` is incomplete — doesn't catch backslashes, null bytes, or use `path.basename()`. Fix: use `path.basename(name)` and verify resolved path is within BGM_DIR (like the preview route does).
+
+14. **src/app/api/manga/[id]/route.ts:60** — For `source === "webtoons"`, `title = id` (the full id like "wt-12345"). User sees the raw ID instead of a readable title. Fix: store the title from search results, or fetch it from the webtoons list page.
+
+15. **src/app/api/manga/[id]/route.ts:63-67** — `baseUrls` object only has mangahere/fanfox/webtoons; missing asurascans, mal, anilist. For asurascans source, `externalUrl` becomes `undefined`. Fix: add asurascans entry, or default to null for unknown sources.
+
+16. **src/app/api/settings/route.ts** — No range validation on `defaultChapterLimit`. A negative number or very large number is accepted and stored. Fix: clamp to `[0, 500]` range.
+
+17. **src/app/api/settings/route.ts** — API keys (groqKey, openaiKey) stored in plaintext in the Setting table. Anyone with DB read access sees the keys. Fix: encrypt at rest, or store in a separate secrets manager / env vars only.
+
+18. **src/app/page.tsx:53-66** — Keyboard shortcut "/" handler calls `e.preventDefault()` when the search input is focused, preventing the user from typing "/" in the search box. Fix: check `document.activeElement` — if it's an input/textarea, don't intercept.
+
+19. **src/components/pipeline/job-progress.tsx:150** — `isRunning && !isPending` — pending jobs have no Cancel button, only Retry. A user who wants to cancel a stuck pending job must retry first or force-delete from job history. Fix: show Cancel for all non-terminal statuses.
+
+20. **src/components/pipeline/job-progress.tsx:85, 91** — `handleCancel` and `handleRetry` are fire-and-forget fetches with no error handling. If they fail, the user gets no feedback. Fix: await the fetch, show a toast on error.
+
+21. **src/components/pipeline/job-progress.tsx:53** — `getActiveStageIndex` returns -1 for error/cancelled, so all stages show as "future" (grayed out). Past completed stages should still show as done. Fix: for error/cancelled, return the stage index based on `job.stage` at time of failure.
+
+22. **src/components/pipeline/video-result.tsx:17-19** — `useState(job.archiveProvider ?? null)` — local state initialized from prop. If the job prop changes (e.g., parent re-fetches after archiving), the local state won't update. Fix: sync with a `useEffect` on `job.archiveProvider`, or derive directly from the prop without local state.
+
+23. **src/components/pipeline/video-result.tsx** — No `onError` handler on `<video>` element. If the video URL fails (404, network error), the player shows a blank state with no error message. Fix: add `onError` handler that shows a fallback message + retry button.
+
+24. **src/components/pipeline/search-section.tsx:67-76** — `externalQuery` useEffect uses `document.querySelector('form')` + `setTimeout(100ms)` to submit. Fragile — depends on DOM timing, selects first form on page. Fix: use a ref to the form, or call `handleSearch` directly with the new query.
+
+25. **src/components/pipeline/search-section.tsx:371, 373** — UI text says "Finding on MangaDex…" / "Match on MangaDex →" but the actual resolve is to MangaHere. Misleading. Fix: update text to "MangaHere".
+
+26. **src/hooks/use-job-progress.ts:53-60, 162-184** — Race condition: REST bootstrap and REST polling can override newer socket-driven state with stale data. The check `data.job.progress !== prev.progress` doesn't determine which is newer. Fix: track a `lastUpdatedAt` timestamp and only accept REST data if newer.
+
+27. **src/hooks/use-job-progress.ts:134-143** — Socket event handlers don't filter by `jobId`. Since the socket is a shared singleton, if two `useJobProgress` hooks mount for different jobIds, both receive both jobs' events and update state incorrectly. Fix: check `payload.jobId === jobId` in each handler before applying.
+
+28. **src/lib/archive.ts** — `cleanupRestoreCache()` is defined but never called. The restore cache (data/cache/restore/) grows unbounded over time. Only stale files for the SAME jobId are deleted on next restore. Fix: call `cleanupRestoreCache()` on a setInterval (e.g., every hour) or on service startup.
+
+29. **src/lib/mega-storage.ts:18, 26-29** — `storage` singleton is never invalidated on error. If the connection drops, cached storage is returned and operations fail. Fix: on error, set `storage = null` so the next call re-creates.
+
+30. **src/lib/mega-storage.ts:63-77** — `uploadToMega` doesn't handle source stream errors. If `createReadStream` errors, the error isn't propagated (only `uploadStream.on("error")` is handled). Fix: add `source.on("error", reject)`.
+
+31. **src/lib/mega-storage.ts** — No timeout on Mega operations. A stalled connection hangs the request indefinitely. Fix: wrap in a Promise.race with a timeout, or use AbortController.
+
+32. **mini-services/pipeline-service/index.ts:1079** — `emitLog` writes to DB on every log line. For a chatty Python pipeline (1000+ lines), that's 1000+ DB INSERTs — slow. Fix: batch logs in memory and flush every 1s, or rate-limit to 1 log per 500ms.
+
+33. **mini-services/pipeline-service/index.ts:867, 931** — Hardcoded English fallback text `'The chapter continues the story.'`. Won't work for non-English narration. Fix: make it locale-aware or use empty string.
+
+34. **pipeline/master_pipeline.py:2089-2090** — `run_pipeline` chapter loop doesn't handle `video_path=None` (rendering failure). The chapter is silently skipped. At the end, the merge proceeds with missing chapters — user gets a video missing chapters with no error. Fix: if any chapter fails, mark the job as error and don't merge.
+
+35. **pipeline/master_pipeline.py:1933-2107** — `run_pipeline` doesn't write progress on exception. If the pipeline fails mid-chapter, the progress file shows stale "rendering" status. Fix: wrap the body in try/except that writes a failure progress entry.
+
+36. **pipeline/master_pipeline.py:1581-1592** — `synthesize_segment_audio` has no retry for edge-tts failures. If edge-tts fails (network blip, rate limit), the segment is replaced with silence. Narration for that segment is lost. Fix: retry 2-3 times with backoff before falling back to silence.
+
+37. **mini-services/pipeline-service/lib.ts:388, 513, 654, 768** — All `download*Image` functions load entire image into RAM via `Buffer.from(await res.arrayBuffer())`. For large manhwa images (5-10MB each), this is wasteful. Fix: stream to disk via `pipeline(res.body, fs.createWriteStream(destPath))`.
+
+38. **mini-services/pipeline-service/lib.ts** — No timeout on any fetch calls (scrapers + z-ai VLM). If a source hangs, the job hangs. Fix: add `fetchWithTimeout` wrapper (already used in src/lib/scrapers.ts).
+
+39. **mini-services/pipeline-service/lib.ts:1263** — `narrateImageBatch` (z-ai provider) has no timeout. Gemini and Groq have 60s timeouts, but z-ai doesn't. Fix: add AbortController with 60s timeout.
+
+== LOW ==
+
+40. **src/lib/mangadex.ts** — Dead code. Not imported anywhere. Duplicate of functionality in scrapers.ts/manga-search.ts. Fix: delete the file.
+
+41. **src/lib/mangahere.ts** — Dead code. Not imported anywhere. Older version of scrapers in scrapers.ts. Has its own bugs (no fetch timeouts, loads images into memory). Fix: delete the file.
+
+42. **src/lib/serialize.ts:90-92** — Unnecessary `(job as any)` casts when the types are already declared in `JobRow`. Fix: remove the casts.
+
+43. **src/lib/r2.ts:17** — `client` singleton — if env vars change, the cached client still uses old credentials. Fix: invalidate on env change, or just don't cache (cheap to construct).
+
+44. **src/components/pipeline/manga-config.tsx:161-163** — Settings/chapters fetch errors are silently swallowed; user sees empty state with no error message. Fix: set an error state and display it.
+
+45. **src/components/pipeline/job-history.tsx:82, 105-109** — Silent error swallowing on fetch and delete. No user feedback on failure. Fix: show a toast on error.
+
+46. **src/components/pipeline/job-history.tsx** — No auto-refresh; job list is static until `refreshKey` changes. A job that completes in another tab isn't reflected. Fix: poll every 30s, or subscribe to socket events.
+
+47. **src/components/pipeline/video-result.tsx:30** — `navigator.clipboard.writeText` rejection is silently caught — no error toast if clipboard is unavailable. Fix: show a toast on catch.
+
+48. **src/hooks/use-toast.ts:12** — `TOAST_REMOVE_DELAY = 1000000` (~17 minutes). Dismissed toasts linger in memory for 17 minutes. Known shadcn pattern but excessive. Fix: reduce to 5000-10000ms.
+
+49. **src/hooks/use-job-progress.ts:211** — Cleanup emits `unsubscribe` even when socket is disconnected. The emit is queued and fires on reconnect, potentially unsubscribing a different hook's subscription to the same jobId. Fix: only emit unsubscribe if `socket.connected`.
+
+50. **pipeline/master_pipeline.py:1193-1194** — `with Image.open(panel_path) as img: img = img.convert("RGB")` — the converted image isn't in a `with` block. Minor memory leak in tight loops. Fix: `with Image.open(panel_path) as src: img = src.convert("RGB")` then `img.close()` after use.
+
+51. **pipeline/master_pipeline.py:1912** — `shutil.copy2` copies the entire 72MB file. Could use `os.rename` for instant move (same filesystem). Fix: try `os.rename` first, fall back to `shutil.copy2` on cross-device error.
+
+52. **pipeline/master_pipeline.py:1582** — `asyncio.run(_run())` creates a new event loop per call. Wasteful for many segments. Fix: reuse a single event loop via `asyncio.get_event_loop()`.
+
+53. **pipeline/master_pipeline.py:1694** — Stale log message "compressor+EQ+loudnorm" — compressor and EQ were removed in task 3. Actual filter is just loudnorm. Fix: update the log message.
+
+54. **pipeline/master_pipeline.py:1832** — `render_chapter` doesn't clean up `concat_list` on failure — temp file leaks. Fix: wrap in try/finally.
+
+55. **pipeline/master_pipeline.py:961** — Hardcoded YOLO model path. If the model isn't downloaded, silently returns `[]` — no user feedback. Fix: log a warning once.
+
+56. **mini-services/pipeline-service/lib.ts:53, 56** — Hardcoded `/home/z/my-project` defaults. Fix: documented behavior — acceptable if env vars are always set in non-sandbox deployments.
+
+57. **mini-services/pipeline-service/lib.ts:113** — VLM cache key uses `imagePath` (full path including jobId). Effectively per-job cache. Could use content hash for cross-job reuse. Fix: hash the file contents, not the path.
+
+58. **src/app/api/search/route.ts:39** — `limit` is parsed but `searchAllManga` returns all deduped results, not sliced to `limit`. The `limit` param is effectively a per-source limit, not a total limit. Fix: slice the final deduped array to `limit`.
+
+59. **src/app/api/jobs/[id]/logs/route.ts** — No pagination/cursor — `take: limit` always returns the most recent N logs. If the client needs older logs, there's no way to fetch them. Fix: add `before` cursor param (log id or timestamp).
+
+60. **src/components/pipeline/job-progress.tsx** — No polling fallback if socket disconnects (the `useJobProgress` hook handles this, but `JobProgress` component shows "syncing…" indefinitely if the socket never reconnects). Fix: add a manual "Refresh" button.
+
+Total bugs found: 60 (1 critical, 10 high, 25 medium, 24 low).

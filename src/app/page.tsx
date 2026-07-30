@@ -9,6 +9,7 @@ import { JobHistory } from "@/components/pipeline/job-history";
 import { HowItWorks } from "@/components/pipeline/how-it-works";
 import { StatsBar } from "@/components/pipeline/stats-bar";
 import { TrendingSearches } from "@/components/pipeline/trending-searches";
+import { FAQ } from "@/components/pipeline/faq";
 import { useJobProgress } from "@/hooks/use-job-progress";
 import type { MangadexManga } from "@/types/pipeline";
 
@@ -108,6 +109,7 @@ export default function Home() {
             <TrendingSearches onPick={handleTrendingPick} />
             <HowItWorks />
             <JobHistory onSelectJob={handleSelectHistoryJob} refreshKey={historyRefresh} />
+            <FAQ />
           </div>
         )}
 

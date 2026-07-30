@@ -141,11 +141,20 @@ export async function GET(
     headers.set("Cache-Control", "no-store");
     headers.set("Cross-Origin-Resource-Policy", "same-origin");
 
-    // No Range header → send the whole file (200).
+    // No Range header → send the whole file (200) via stream (not readFile).
+    // Using readFile loads the entire 72MB video into RAM — fine on the sandbox
+    // but causes OOM on Vercel's serverless functions (limited memory).
+    // Streaming with createReadStream keeps memory usage constant.
     if (!rangeHeader) {
       headers.set("Content-Length", String(fileSize));
-      const data = await fs.readFile(filePath);
-      return new NextResponse(data, { status: 200, headers });
+      const fileHandle = await fs.open(filePath, "r");
+      const stream = fileHandle.createReadStream();
+      stream.on("close", () => { fileHandle.close().catch(() => {}); });
+      stream.on("error", () => { fileHandle.close().catch(() => {}); });
+      return new NextResponse(stream as unknown as ReadableStream, {
+        status: 200,
+        headers,
+      });
     }
 
     // Parse "bytes=start-end"
