@@ -976,11 +976,16 @@ export async function generateImageNarrations(
     })
   }
   const totalBatches = batches.length
-  // Check Gemini BEFORE using it (const is block-scoped, not hoisted).
+  // Check providers BEFORE using them (const is block-scoped, not hoisted).
+  const useGroq = isGroqVlmConfigured()
   const useGemini = isGeminiConfigured()
-  const providers = useGemini ? 'z-ai + gemini (round-robin)' : 'z-ai'
+  const providerList = [
+    useGroq ? 'groq' : null,
+    useGemini ? 'gemini' : null,
+    'z-ai', // z-ai is always available (built-in SDK)
+  ].filter(Boolean).join(' + ')
   console.log(
-    `[VLM] transcribing ${imagePaths.length} images in ${totalBatches} batches (${BATCH_SIZE}/batch) with concurrency ${CONCURRENCY} [${providers}]`,
+    `[VLM] transcribing ${imagePaths.length} images in ${totalBatches} batches (${BATCH_SIZE}/batch) with concurrency ${CONCURRENCY} [${providerList}]`,
   )
 
   // Atomic progress counter — shared across all concurrent workers.
@@ -991,13 +996,14 @@ export async function generateImageNarrations(
     }
   }
 
-  // Round-robin counter — alternates batches between z-ai (even) and Gemini
-  // (odd) so each provider handles ~half the load.
+  // Round-robin counter — distributes batches across providers.
   let roundRobinCounter = 0
 
-  // Circuit breaker: if Gemini returns N consecutive 429s, disable it for
-  // the rest of this transcription. Avoids wasting time on retries when the
-  // free-tier rate limit is exhausted. Resets on next job.
+  // Circuit breakers: disable a provider after N consecutive 429s/403s.
+  let groqConsecutiveErrors = 0
+  let groqDisabled = false
+  const GROQ_ERROR_THRESHOLD = 3
+
   let geminiConsecutive429s = 0
   let geminiDisabled = false
   const GEMINI_429_THRESHOLD = 3
@@ -1007,16 +1013,40 @@ export async function generateImageNarrations(
   async function processBatch(batch: (typeof batches)[0]): Promise<void> {
     const { images, startIdx, num } = batch
 
-    // Pick provider: 1 in 3 batches goes to Gemini (1:2 ratio with z-ai).
-    // Skipped if the circuit breaker has disabled Gemini (too many 429s).
-    const useGeminiThisBatch = useGemini && !geminiDisabled && (roundRobinCounter++ % 3 === 2)
-    const providerLabel = useGeminiThisBatch ? 'gemini' : 'z-ai'
+    // Provider selection (priority order):
+    //   1. Groq (fastest — LPU hardware, 30 req/min free). 2 of every 3 batches.
+    //   2. Gemini (backup vision provider). Every 3rd batch if Groq not configured.
+    //   3. z-ai (always available as the reliable fallback).
+    //
+    // When Groq is configured, it gets 2/3 of batches (primary), z-ai gets 1/3
+    // (fallback). Gemini is only used if Groq isn't configured.
+    // Circuit breakers disable a provider after consecutive errors.
+    const rr = roundRobinCounter++
+    let providerLabel: 'groq' | 'gemini' | 'z-ai'
+
+    if (useGroq && !groqDisabled) {
+      // Groq primary: batches 0,1,3,4,6,7... (2 of 3)
+      if (rr % 3 !== 2) {
+        providerLabel = 'groq'
+      } else if (useGemini && !geminiDisabled) {
+        providerLabel = 'gemini'
+      } else {
+        providerLabel = 'z-ai'
+      }
+    } else if (useGemini && !geminiDisabled) {
+      // No Groq — Gemini gets 1/3, z-ai gets 2/3
+      providerLabel = rr % 3 === 2 ? 'gemini' : 'z-ai'
+    } else {
+      providerLabel = 'z-ai'
+    }
 
     let batchTexts: string[]
     let succeeded = false
     let countedPerImage = false  // set true if single-image fallback counted panels
     try {
-      if (useGeminiThisBatch) {
+      if (providerLabel === 'groq') {
+        batchTexts = await narrateImageBatchGroq(images, startIdx)
+      } else if (providerLabel === 'gemini') {
         batchTexts = await narrateImageBatchGemini(images, startIdx)
       } else {
         batchTexts = await narrateImageBatch(images, startIdx)
@@ -1025,11 +1055,21 @@ export async function generateImageNarrations(
     } catch (primaryErr) {
       const errMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr)
       const isContentFilter = errMsg.includes('contentFilter') || errMsg.includes('400')
-      const isGemini429 = useGeminiThisBatch && errMsg.includes('429')
+      const isRateLimit = errMsg.includes('429') || errMsg.includes('rate')
+      const isForbidden = errMsg.includes('403') || errMsg.includes('Forbidden')
 
-      // Circuit breaker: track consecutive Gemini 429s. After N, disable
-      // Gemini for the rest of this transcription to stop wasting time.
-      if (isGemini429) {
+      // --- Circuit breakers ---
+      // Track consecutive errors per provider. After N, disable it for the
+      // rest of this transcription to stop wasting time on retries.
+      if (providerLabel === 'groq' && (isRateLimit || isForbidden)) {
+        groqConsecutiveErrors++
+        if (groqConsecutiveErrors >= GROQ_ERROR_THRESHOLD && !groqDisabled) {
+          groqDisabled = true
+          console.warn(
+            `[VLM:groq] circuit breaker tripped after ${groqConsecutiveErrors} consecutive errors — disabling Groq for this transcription`,
+          )
+        }
+      } else if (providerLabel === 'gemini' && isRateLimit) {
         geminiConsecutive429s++
         if (geminiConsecutive429s >= GEMINI_429_THRESHOLD && !geminiDisabled) {
           geminiDisabled = true
@@ -1037,14 +1077,12 @@ export async function generateImageNarrations(
             `[VLM:gemini] circuit breaker tripped after ${geminiConsecutive429s} consecutive 429s — disabling Gemini for this transcription`,
           )
         }
-      } else if (useGeminiThisBatch && !isContentFilter) {
-        // Gemini succeeded on a previous batch or failed non-429 — reset
-        geminiConsecutive429s = 0
       }
 
-      // Cross-provider fallback: if Gemini failed on a non-content-filter
-      // error, retry the same batch on z-ai before giving up.
-      if (useGeminiThisBatch && !isContentFilter) {
+      // --- Cross-provider fallback ---
+      // If the primary provider failed on a non-content-filter error, retry
+      // the same batch on z-ai (the most reliable provider) before giving up.
+      if (providerLabel !== 'z-ai' && !isContentFilter) {
         try {
           console.warn(
             `[VLM:${providerLabel}] batch ${num}/${totalBatches} failed (${errMsg.slice(0, 80)}) — falling back to z-ai`,
@@ -1052,7 +1090,7 @@ export async function generateImageNarrations(
           batchTexts = await narrateImageBatch(images, startIdx)
           succeeded = true
         } catch {
-          // Both providers failed — fall through to error handling below
+          // z-ai also failed — fall through to error handling below
         }
       }
 
@@ -1389,6 +1427,166 @@ async function narrateImageBatchGemini(imgPaths: string[], batchStart: number): 
       const delayMs = BASE_DELAY_MS * Math.pow(2, attempt)
       console.warn(
         `[VLM:gemini] batch (panels ${batchStart + 1}-${batchStart + images.length}) attempt ${attempt + 1}/${MAX_RETRIES + 1} failed (${msg.slice(0, 80)}) — retrying in ${delayMs}ms`,
+      )
+      await sleep(delayMs)
+    }
+  }
+
+  throw lastErr
+}
+
+// ---------------------------------------------------------------------------
+// GROQ VLM — third provider, fastest option (LPU hardware, 30 req/min free).
+// Uses Groq's OpenAI-compatible API with a vision-capable model (Llama 4
+// Scout). Groq's LPU inference is purpose-built for speed — typically 3-5x
+// faster than cloud GPU providers for the same model size.
+// ---------------------------------------------------------------------------
+
+export function isGroqVlmConfigured(): boolean {
+  return Boolean(process.env.GROQ_API_KEY)
+}
+
+/**
+ * Same interface as narrateImageBatch, but calls Groq's vision model via its
+ * OpenAI-compatible REST API. Reuses the same prompt + cache + parseBatchResponse.
+ */
+async function narrateImageBatchGroq(imgPaths: string[], batchStart: number): Promise<string[]> {
+  // Check cache first (same cache as z-ai + Gemini).
+  const cachedResults: (string | null)[] = []
+  let allCached = true
+  for (const imgPath of imgPaths) {
+    const cached = await getVlmCached(vlmCacheKey(imgPath))
+    cachedResults.push(cached)
+    if (cached === null) allCached = false
+  }
+  if (allCached) {
+    console.log(`[VLM:groq] cache hit — all ${imgPaths.length} panels cached, skipping API call`)
+    return cachedResults as string[]
+  }
+
+  const apiKey = process.env.GROQ_API_KEY!
+  // Llama 4 Scout is Groq's current vision model. It's fast and handles
+  // multi-image batches well. Override via GROQ_VLM_MODEL if needed.
+  const model = process.env.GROQ_VLM_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct'
+  const url = 'https://api.groq.com/openai/v1/chat/completions'
+
+  // Read + base64-encode each image.
+  const images: Array<{ mime: string; b64: string }> = []
+  for (const imgPath of imgPaths) {
+    const buf = await fs.readFile(imgPath)
+    const ext = path.extname(imgPath).toLowerCase()
+    const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
+    images.push({ mime, b64: buf.toString('base64') })
+  }
+
+  // Same prompt as z-ai + Gemini — keeps transcription consistent.
+  const prompt =
+    `You are a precise transcriber for webtoon/manhwa panels, not a narrator. ` +
+    `I am sending you ${images.length} separate panel images, labeled Panel 1 through Panel ${images.length} ` +
+    `(in the order they appear below). For EACH panel, transcribe ONLY the actual text you can see inside ` +
+    `speech bubbles, thought bubbles, and caption/narration boxes — in the order a reader would naturally ` +
+    `read them (top to bottom, left to right within the panel). Translate to natural English if not already ` +
+    `in English, preserving meaning and tone.\n\n` +
+    `Guidelines:\n` +
+    `1. Output the text VERBATIM (translated) — do not paraphrase, summarize, embellish, or add descriptive ` +
+    `narration. Do not invent dialogue that is not actually written.\n` +
+    `2. Do not describe artwork, action, or expressions — only transcribe written text that appears in the image.\n` +
+    `3. If multiple bubbles/boxes are present in a panel, join them in reading order as separate sentences, ` +
+    `preserving punctuation like "..." and "!" as written.\n` +
+    `4. Sound effect text (e.g. "BOOM", "CRASH") can be included briefly if it is the only text present, ` +
+    `otherwise skip pure onomatopoeia in favor of actual dialogue/captions.\n` +
+    `5. If a panel has NO readable text at all (a purely visual/action panel with no bubbles or captions), ` +
+    `use an empty string for that panel's text.\n\n` +
+    `RESPONSE FORMAT: Return a JSON array with exactly ${images.length} elements, one per panel in order. ` +
+    `Each element is an object: {"index": <1-based panel number>, "text": "<transcribed text or empty string>"}.\n` +
+    `Output ONLY the JSON array — no preamble, no markdown fences, no explanation.\n` +
+    `Example for 2 panels: [{"index": 1, "text": "What is this place?"}, {"index": 2, "text": ""}]`
+
+  // Build OpenAI-compatible request body (Groq uses the same format).
+  const content: Array<
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } }
+  > = [
+    { type: 'text', text: prompt },
+    ...images.map(img => ({
+      type: 'image_url' as const,
+      image_url: { url: `data:${img.mime};base64,${img.b64}` },
+    })),
+  ]
+
+  const body = {
+    model,
+    messages: [{ role: 'user', content }],
+    temperature: 0.1,
+    max_tokens: 4096,
+  }
+
+  const MAX_RETRIES = 3
+  const BASE_DELAY_MS = 2000
+  let lastErr: unknown = null
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 60000) // 60s per batch
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+      clearTimeout(timeout)
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '')
+        throw new Error(`Groq API ${res.status}: ${errText.slice(0, 200)}`)
+      }
+
+      const data = await res.json() as {
+        choices?: Array<{ message?: { content?: string } }>
+        error?: { message?: string }
+      }
+
+      if (data.error) {
+        throw new Error(`Groq error: ${data.error.message || JSON.stringify(data.error)}`)
+      }
+
+      const raw = data.choices?.[0]?.message?.content?.trim() ?? ''
+      const texts = parseBatchResponse(raw, images.length)
+
+      // Cache each panel's transcription (same cache as other providers).
+      for (let i = 0; i < imgPaths.length && i < texts.length; i++) {
+        if (texts[i]) {
+          void setVlmCached(vlmCacheKey(imgPaths[i]), texts[i])
+        }
+      }
+      return texts
+    } catch (err) {
+      lastErr = err
+      const msg = err instanceof Error ? err.message : String(err)
+      // 429 = rate limited. Don't retry — throw immediately so the circuit
+      // breaker + z-ai fallback handle it. Saves ~15s of wasted backoff.
+      const is429 = msg.includes('429')
+      if (is429) {
+        throw err
+      }
+      // 403 = forbidden (invalid key, model not available). Don't retry.
+      const is403 = msg.includes('403')
+      if (is403) {
+        throw err
+      }
+      const isRetryable = /5\d{2}|server error|timeout|econnreset|socket hang up|fetch failed|aborted/i.test(msg)
+
+      if (!isRetryable || attempt === MAX_RETRIES) {
+        throw err
+      }
+
+      const delayMs = BASE_DELAY_MS * Math.pow(2, attempt)
+      console.warn(
+        `[VLM:groq] batch (panels ${batchStart + 1}-${batchStart + images.length}) attempt ${attempt + 1}/${MAX_RETRIES + 1} failed (${msg.slice(0, 80)}) — retrying in ${delayMs}ms`,
       )
       await sleep(delayMs)
     }
