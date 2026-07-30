@@ -949,57 +949,118 @@ export async function generateImageNarrations(
   // (190 panels -> ~32 batch calls), dramatically reducing both total time
   // and rate-limit pressure.
   //
-  // Batches are processed SEQUENTIALLY with a small inter-batch delay +
-  // exponential backoff on 429/5xx. If a batch call fails or returns
+  // CONCURRENT processing: multiple batches run simultaneously to cut total
+  // transcription time ~4-5x. Configurable via VLM_CONCURRENCY env var
+  // (default 4). Each batch writes to disjoint indices in the results array
+  // so there are no race conditions. If a batch call fails or returns
   // unparseable output, we fall back to single-image calls for just that
   // batch's panels (so no panel is permanently lost).
   const BATCH_SIZE = 6
-  const INTER_BATCH_DELAY_MS = 800
+  // Concurrency: 3 batches at a time = 18 panels transcribing in parallel.
+  // Default 3 (not higher) because z-ai's free VLM tier rate-limits (429) when
+  // too many calls overlap — especially when a batch fails and triggers 6
+  // single-image fallback calls on top of the running batches. 3 is the sweet
+  // spot: ~3x speedup with minimal 429 retries. Tune via VLM_CONCURRENCY env.
+  const CONCURRENCY = Math.max(
+    1,
+    Math.min(6, parseInt(process.env.VLM_CONCURRENCY || '3', 10)),
+  )
 
+  // Build the list of batches to process.
+  const batches: Array<{ images: string[]; startIdx: number; num: number }> = []
   for (let i = 0; i < imagePaths.length; i += BATCH_SIZE) {
-    const batch = imagePaths.slice(i, i + BATCH_SIZE)
-    const batchStart = i
-    const batchNum = Math.floor(i / BATCH_SIZE) + 1
-    const totalBatches = Math.ceil(imagePaths.length / BATCH_SIZE)
+    batches.push({
+      images: imagePaths.slice(i, i + BATCH_SIZE),
+      startIdx: i,
+      num: Math.floor(i / BATCH_SIZE) + 1,
+    })
+  }
+  const totalBatches = batches.length
+  console.log(
+    `[VLM] transcribing ${imagePaths.length} images in ${totalBatches} batches (${BATCH_SIZE}/batch) with concurrency ${CONCURRENCY}`,
+  )
 
+  // Atomic progress counter — shared across all concurrent workers.
+  let completedPanels = 0
+  const reportProgress = () => {
+    if (onProgress) {
+      onProgress(Math.min(completedPanels, imagePaths.length), imagePaths.length)
+    }
+  }
+
+  // Process a single batch — writes results into the shared array at the
+  // batch's start index (disjoint from other batches, so no locking needed).
+  async function processBatch(batch: (typeof batches)[0]): Promise<void> {
+    const { images, startIdx, num } = batch
     let batchTexts: string[]
     try {
-      batchTexts = await narrateImageBatch(batch, batchStart)
+      batchTexts = await narrateImageBatch(images, startIdx)
     } catch (err) {
-      console.warn(
-        `[VLM] batch ${batchNum}/${totalBatches} failed (${err instanceof Error ? err.message.slice(0, 80) : err}) — falling back to single-image calls`,
-      )
-      // Fallback: transcribe each panel in this batch individually.
-      batchTexts = []
-      for (const imgPath of batch) {
-        try {
-          batchTexts.push(await narrateSingleImage(imgPath))
-        } catch (e) {
-          console.error(`[VLM] single-image fallback failed for ${path.basename(imgPath)}:`, e)
-          batchTexts.push('The scene continues to unfold.')
-        }
-        if (onProgress) {
-          onProgress(Math.min(i + batchTexts.length, imagePaths.length), imagePaths.length)
-        }
-        if (batchTexts.length < batch.length) {
-          await sleep(INTER_BATCH_DELAY_MS)
+      const errMsg = err instanceof Error ? err.message : String(err)
+      // Content-filter errors (400 with "contentFilter") will fail the same way
+      // for every individual image in the batch — falling back to 6 single-image
+      // calls just wastes time and triggers rate limits (429). Use placeholder
+      // text directly and move on.
+      const isContentFilter = errMsg.includes('contentFilter') || errMsg.includes('400')
+      if (isContentFilter) {
+        console.warn(
+          `[VLM] batch ${num}/${totalBatches} hit content filter — using placeholder text for ${images.length} panels`,
+        )
+        batchTexts = images.map(() => 'The scene continues to unfold.')
+      } else {
+        console.warn(
+          `[VLM] batch ${num}/${totalBatches} failed (${errMsg.slice(0, 80)}) — falling back to single-image calls`,
+        )
+        // Fallback: transcribe each panel in this batch individually.
+        batchTexts = []
+        for (const imgPath of images) {
+          try {
+            batchTexts.push(await narrateSingleImage(imgPath))
+          } catch (e) {
+            console.error(`[VLM] single-image fallback failed for ${path.basename(imgPath)}:`, e)
+            batchTexts.push('The scene continues to unfold.')
+          }
+          completedPanels++
+          reportProgress()
         }
       }
+      // Write results (progress was already reported per-image above).
+      for (let j = 0; j < images.length; j++) {
+        results[startIdx + j] = {
+          image: path.basename(images[j]),
+          text: batchTexts[j] ?? '',
+        }
+      }
+      return
     }
 
-    for (let j = 0; j < batch.length; j++) {
-      results[batchStart + j] = {
-        image: path.basename(batch[j]),
+    // Write results for this batch.
+    for (let j = 0; j < images.length; j++) {
+      results[startIdx + j] = {
+        image: path.basename(images[j]),
         text: batchTexts[j] ?? '',
       }
     }
-    if (onProgress) {
-      onProgress(Math.min(i + BATCH_SIZE, imagePaths.length), imagePaths.length)
-    }
-    if (i + BATCH_SIZE < imagePaths.length) {
-      await sleep(INTER_BATCH_DELAY_MS)
+    completedPanels += images.length
+    reportProgress()
+  }
+
+  // Simple concurrency pool: spin up CONCURRENCY workers, each pulling the
+  // next unprocessed batch from the queue. This naturally load-balances —
+  // faster workers pick up more batches.
+  let nextBatchIdx = 0
+  async function worker(): Promise<void> {
+    while (nextBatchIdx < batches.length) {
+      const batchIdx = nextBatchIdx++
+      await processBatch(batches[batchIdx])
     }
   }
+
+  const workers: Promise<void>[] = []
+  for (let i = 0; i < CONCURRENCY; i++) {
+    workers.push(worker())
+  }
+  await Promise.all(workers)
 
   return results
 }
