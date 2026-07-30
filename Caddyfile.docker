@@ -1,0 +1,32 @@
+# Caddyfile for Hugging Face Spaces deployment.
+# Listens on port 7860 (HF Spaces default) and routes:
+#   - ?XTransformPort=3001  →  pipeline-service (socket.io + Python pipeline)
+#   - everything else       →  Next.js (port 3000)
+#
+# The browser's socket.io client connects to the same origin with
+# ?XTransformPort=3001 in the query string; Caddy forwards it to port 3001.
+# Server-side API routes call http://localhost:3001 directly (no Caddy needed).
+
+:7860 {
+	@transform_port_query {
+		query XTransformPort=*
+	}
+
+	handle @transform_port_query {
+		reverse_proxy localhost:{query.XTransformPort} {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	handle {
+		reverse_proxy localhost:3000 {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+}

@@ -1,0 +1,33 @@
+# Build context exclusions — keeps the Docker image small + build fast
+node_modules
+.next
+data
+db
+download
+upload
+tool-results
+skills
+mini-services-dist
+pipeline/__pycache__
+pipeline/models
+data/cache
+
+# Runtime logs
+*.log
+dev.log
+dev.out.log
+server.log
+
+# QA screenshots (not needed in the image)
+*.png
+
+# Environment + git (never bake secrets into the image)
+.env
+.env.*
+.git
+.gitignore
+
+# IDE / OS files
+.DS_Store
+.vscode
+.idea
