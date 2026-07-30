@@ -953,17 +953,18 @@ export async function generateImageNarrations(
   // transcription time ~4-5x. Configurable via VLM_CONCURRENCY env var
   // (default 4). Each batch writes to disjoint indices in the results array
   // so there are no race conditions. If a batch call fails or returns
-  // BATCH_SIZE: number of panel images sent per VLM API call. Higher = fewer
-  // API calls = less rate-limit pressure + faster overall. 10 is a good balance
-  // — most VLM APIs accept up to ~16 images per call, but 10 keeps response
-  // times reasonable and avoids token-limit truncation.
-  const BATCH_SIZE = 10
-  // Concurrency: 4 batches at a time = 40 panels transcribing in parallel.
-  // Safe now that single-image fallback is removed (no more 429 storms from
-  // 6× retries per failed batch). Tune via VLM_CONCURRENCY env.
+  // BATCH_SIZE: number of panel images sent per VLM API call. 6 is the sweet
+  // spot — large enough to reduce API calls, small enough to avoid token-limit
+  // truncation and keep response times reasonable.
+  const BATCH_SIZE = 6
+  // Concurrency: 2 batches at a time = 12 panels transcribing in parallel.
+  // Kept LOW (2, not 4) because z-ai's free VLM tier rate-limits aggressively
+  // (429) when too many concurrent calls overlap. With 2 workers + the batch
+  // retry logic, failed batches get retried after a delay instead of piling
+  // up more 429s. Tune via VLM_CONCURRENCY env.
   const CONCURRENCY = Math.max(
     1,
-    Math.min(8, parseInt(process.env.VLM_CONCURRENCY || '4', 10)),
+    Math.min(4, parseInt(process.env.VLM_CONCURRENCY || '2', 10)),
   )
 
   // Build the list of batches to process.
@@ -1095,17 +1096,39 @@ export async function generateImageNarrations(
       }
 
       if (!succeeded) {
-        // All providers failed for this batch. Use empty text (silence) for
-        // all panels. Previously this fell back to 6 single-image calls per
-        // batch — but those got 429'd individually (6 × 5 retries × 8s backoff
-        // = ~240s per failed batch), making transcription take forever.
-        // Empty text = silence during that panel, which is the correct
-        // behavior for panels with no readable text anyway.
+        // All providers failed for this batch. RETRY the whole batch with a
+        // longer delay before giving up. Rate limits (429) are transient —
+        // waiting 10-30s usually lets the quota reset. Only use empty text
+        // (silence) as a last resort after all retries are exhausted.
         console.warn(
-          `[VLM:${providerLabel}] batch ${num}/${totalBatches} failed on all providers — leaving ${images.length} panels silent`,
+          `[VLM:${providerLabel}] batch ${num}/${totalBatches} failed on all providers — retrying with backoff`,
         )
-        batchTexts = images.map(() => '')
-        succeeded = true
+        const BATCH_RETRY_DELAYS = [10000, 20000, 30000] // 10s, 20s, 30s
+        for (let retry = 0; retry < BATCH_RETRY_DELAYS.length && !succeeded; retry++) {
+          await sleep(BATCH_RETRY_DELAYS[retry])
+          console.warn(`[VLM] batch ${num}/${totalBatches} retry ${retry + 1}/${BATCH_RETRY_DELAYS.length} after ${BATCH_RETRY_DELAYS[retry] / 1000}s`)
+          try {
+            // Try z-ai directly (most reliable) on retries
+            batchTexts = await narrateImageBatch(images, startIdx)
+            succeeded = true
+            console.log(`[VLM] batch ${num}/${totalBatches} succeeded on retry ${retry + 1}`)
+          } catch (retryErr) {
+            const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr)
+            console.warn(`[VLM] batch ${num}/${totalBatches} retry ${retry + 1} failed: ${retryMsg.slice(0, 80)}`)
+          }
+        }
+
+        if (!succeeded) {
+          // Final fallback: empty text (silence). This is the correct behavior
+          // for panels with genuinely no readable text. For panels that DO have
+          // text but all VLM providers failed, the silence is the lesser evil —
+          // the alternative was the annoying "scene continues to unfold" loop.
+          console.warn(
+            `[VLM] batch ${num}/${totalBatches} exhausted all retries — leaving ${images.length} panels silent`,
+          )
+          batchTexts = images.map(() => '')
+          succeeded = true
+        }
       }
     }
 
