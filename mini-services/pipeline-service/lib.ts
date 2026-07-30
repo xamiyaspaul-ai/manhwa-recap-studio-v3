@@ -976,8 +976,11 @@ export async function generateImageNarrations(
     })
   }
   const totalBatches = batches.length
+  // Check Gemini BEFORE using it (const is block-scoped, not hoisted).
+  const useGemini = isGeminiConfigured()
+  const providers = useGemini ? 'z-ai + gemini (round-robin)' : 'z-ai'
   console.log(
-    `[VLM] transcribing ${imagePaths.length} images in ${totalBatches} batches (${BATCH_SIZE}/batch) with concurrency ${CONCURRENCY}`,
+    `[VLM] transcribing ${imagePaths.length} images in ${totalBatches} batches (${BATCH_SIZE}/batch) with concurrency ${CONCURRENCY} [${providers}]`,
   )
 
   // Atomic progress counter — shared across all concurrent workers.
@@ -988,50 +991,100 @@ export async function generateImageNarrations(
     }
   }
 
+  // Round-robin counter — alternates batches between z-ai (even) and Gemini
+  // (odd) so each provider handles ~half the load.
+  let roundRobinCounter = 0
+
+  // Circuit breaker: if Gemini returns N consecutive 429s, disable it for
+  // the rest of this transcription. Avoids wasting time on retries when the
+  // free-tier rate limit is exhausted. Resets on next job.
+  let geminiConsecutive429s = 0
+  let geminiDisabled = false
+  const GEMINI_429_THRESHOLD = 3
+
   // Process a single batch — writes results into the shared array at the
   // batch's start index (disjoint from other batches, so no locking needed).
   async function processBatch(batch: (typeof batches)[0]): Promise<void> {
     const { images, startIdx, num } = batch
+
+    // Pick provider: 1 in 3 batches goes to Gemini (1:2 ratio with z-ai).
+    // Skipped if the circuit breaker has disabled Gemini (too many 429s).
+    const useGeminiThisBatch = useGemini && !geminiDisabled && (roundRobinCounter++ % 3 === 2)
+    const providerLabel = useGeminiThisBatch ? 'gemini' : 'z-ai'
+
     let batchTexts: string[]
+    let succeeded = false
+    let countedPerImage = false  // set true if single-image fallback counted panels
     try {
-      batchTexts = await narrateImageBatch(images, startIdx)
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err)
-      // Content-filter errors (400 with "contentFilter") will fail the same way
-      // for every individual image in the batch — falling back to 6 single-image
-      // calls just wastes time and triggers rate limits (429). Use placeholder
-      // text directly and move on.
-      const isContentFilter = errMsg.includes('contentFilter') || errMsg.includes('400')
-      if (isContentFilter) {
-        console.warn(
-          `[VLM] batch ${num}/${totalBatches} hit content filter — using placeholder text for ${images.length} panels`,
-        )
-        batchTexts = images.map(() => 'The scene continues to unfold.')
+      if (useGeminiThisBatch) {
+        batchTexts = await narrateImageBatchGemini(images, startIdx)
       } else {
-        console.warn(
-          `[VLM] batch ${num}/${totalBatches} failed (${errMsg.slice(0, 80)}) — falling back to single-image calls`,
-        )
-        // Fallback: transcribe each panel in this batch individually.
-        batchTexts = []
-        for (const imgPath of images) {
-          try {
-            batchTexts.push(await narrateSingleImage(imgPath))
-          } catch (e) {
-            console.error(`[VLM] single-image fallback failed for ${path.basename(imgPath)}:`, e)
-            batchTexts.push('The scene continues to unfold.')
+        batchTexts = await narrateImageBatch(images, startIdx)
+      }
+      succeeded = true
+    } catch (primaryErr) {
+      const errMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr)
+      const isContentFilter = errMsg.includes('contentFilter') || errMsg.includes('400')
+      const isGemini429 = useGeminiThisBatch && errMsg.includes('429')
+
+      // Circuit breaker: track consecutive Gemini 429s. After N, disable
+      // Gemini for the rest of this transcription to stop wasting time.
+      if (isGemini429) {
+        geminiConsecutive429s++
+        if (geminiConsecutive429s >= GEMINI_429_THRESHOLD && !geminiDisabled) {
+          geminiDisabled = true
+          console.warn(
+            `[VLM:gemini] circuit breaker tripped after ${geminiConsecutive429s} consecutive 429s — disabling Gemini for this transcription`,
+          )
+        }
+      } else if (useGeminiThisBatch && !isContentFilter) {
+        // Gemini succeeded on a previous batch or failed non-429 — reset
+        geminiConsecutive429s = 0
+      }
+
+      // Cross-provider fallback: if Gemini failed on a non-content-filter
+      // error, retry the same batch on z-ai before giving up.
+      if (useGeminiThisBatch && !isContentFilter) {
+        try {
+          console.warn(
+            `[VLM:${providerLabel}] batch ${num}/${totalBatches} failed (${errMsg.slice(0, 80)}) — falling back to z-ai`,
+          )
+          batchTexts = await narrateImageBatch(images, startIdx)
+          succeeded = true
+        } catch {
+          // Both providers failed — fall through to error handling below
+        }
+      }
+
+      if (!succeeded) {
+        // Content-filter: use placeholder text (single-image calls would
+        // fail the same way and just trigger 429 rate limits).
+        if (isContentFilter) {
+          console.warn(
+            `[VLM:${providerLabel}] batch ${num}/${totalBatches} hit content filter — using placeholder text for ${images.length} panels`,
+          )
+          batchTexts = images.map(() => 'The scene continues to unfold.')
+          succeeded = true
+        } else {
+          // Non-content-filter error — fall back to single-image calls.
+          console.warn(
+            `[VLM:${providerLabel}] batch ${num}/${totalBatches} failed (${errMsg.slice(0, 80)}) — falling back to single-image calls`,
+          )
+          batchTexts = []
+          countedPerImage = true
+          for (const imgPath of images) {
+            try {
+              batchTexts.push(await narrateSingleImage(imgPath))
+            } catch (e) {
+              console.error(`[VLM:${providerLabel}] single-image fallback failed for ${path.basename(imgPath)}:`, e)
+              batchTexts.push('The scene continues to unfold.')
+            }
+            completedPanels++
+            reportProgress()
           }
-          completedPanels++
-          reportProgress()
+          succeeded = true
         }
       }
-      // Write results (progress was already reported per-image above).
-      for (let j = 0; j < images.length; j++) {
-        results[startIdx + j] = {
-          image: path.basename(images[j]),
-          text: batchTexts[j] ?? '',
-        }
-      }
-      return
     }
 
     // Write results for this batch.
@@ -1041,7 +1094,12 @@ export async function generateImageNarrations(
         text: batchTexts[j] ?? '',
       }
     }
-    completedPanels += images.length
+    // Only increment once — the single-image fallback path already counted
+    // per-image. The other paths (success, content-filter, cross-provider
+    // fallback) count here.
+    if (!countedPerImage) {
+      completedPanels += images.length
+    }
     reportProgress()
   }
 
@@ -1183,6 +1241,154 @@ async function narrateImageBatch(imgPaths: string[], batchStart: number): Promis
       const delayMs = BASE_DELAY_MS * Math.pow(2, attempt)
       console.warn(
         `[VLM] batch (panels ${batchStart + 1}-${batchStart + images.length}) attempt ${attempt + 1}/${MAX_RETRIES + 1} failed (${msg.slice(0, 80)}) — retrying in ${delayMs}ms`,
+      )
+      await sleep(delayMs)
+    }
+  }
+
+  throw lastErr
+}
+
+// ---------------------------------------------------------------------------
+// GEMINI VLM — second provider for round-robin load balancing.
+// Uses the Gemini 2.0 Flash REST API (free tier, vision-capable, fast).
+// When configured, batches alternate between z-ai and Gemini to double
+// throughput and halve the transcription time.
+// ---------------------------------------------------------------------------
+
+export function isGeminiConfigured(): boolean {
+  return Boolean(process.env.GEMINI_API_KEY)
+}
+
+/**
+ * Same interface as narrateImageBatch, but calls Google Gemini 2.0 Flash
+ * via its REST API. Reuses the same prompt + cache + parseBatchResponse so
+ * transcription quality is identical between providers.
+ */
+async function narrateImageBatchGemini(imgPaths: string[], batchStart: number): Promise<string[]> {
+  // Check cache first (same cache as z-ai — a panel transcribed by either
+  // provider is reused on re-runs).
+  const cachedResults: (string | null)[] = []
+  let allCached = true
+  for (const imgPath of imgPaths) {
+    const cached = await getVlmCached(vlmCacheKey(imgPath))
+    cachedResults.push(cached)
+    if (cached === null) allCached = false
+  }
+  if (allCached) {
+    console.log(`[VLM:gemini] cache hit — all ${imgPaths.length} panels cached, skipping API call`)
+    return cachedResults as string[]
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY!
+  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash'
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
+
+  // Read + base64-encode each image.
+  const images: Array<{ mime: string; b64: string }> = []
+  for (const imgPath of imgPaths) {
+    const buf = await fs.readFile(imgPath)
+    const ext = path.extname(imgPath).toLowerCase()
+    const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
+    images.push({ mime, b64: buf.toString('base64') })
+  }
+
+  // Same prompt as z-ai — keeps transcription consistent across providers.
+  const prompt =
+    `You are a precise transcriber for webtoon/manhwa panels, not a narrator. ` +
+    `I am sending you ${images.length} separate panel images, labeled Panel 1 through Panel ${images.length} ` +
+    `(in the order they appear below). For EACH panel, transcribe ONLY the actual text you can see inside ` +
+    `speech bubbles, thought bubbles, and caption/narration boxes — in the order a reader would naturally ` +
+    `read them (top to bottom, left to right within the panel). Translate to natural English if not already ` +
+    `in English, preserving meaning and tone.\n\n` +
+    `Guidelines:\n` +
+    `1. Output the text VERBATIM (translated) — do not paraphrase, summarize, embellish, or add descriptive ` +
+    `narration. Do not invent dialogue that is not actually written.\n` +
+    `2. Do not describe artwork, action, or expressions — only transcribe written text that appears in the image.\n` +
+    `3. If multiple bubbles/boxes are present in a panel, join them in reading order as separate sentences, ` +
+    `preserving punctuation like "..." and "!" as written.\n` +
+    `4. Sound effect text (e.g. "BOOM", "CRASH") can be included briefly if it is the only text present, ` +
+    `otherwise skip pure onomatopoeia in favor of actual dialogue/captions.\n` +
+    `5. If a panel has NO readable text at all (a purely visual/action panel with no bubbles or captions), ` +
+    `use an empty string for that panel's text.\n\n` +
+    `RESPONSE FORMAT: Return a JSON array with exactly ${images.length} elements, one per panel in order. ` +
+    `Each element is an object: {"index": <1-based panel number>, "text": "<transcribed text or empty string>"}.\n` +
+    `Output ONLY the JSON array — no preamble, no markdown fences, no explanation.\n` +
+    `Example for 2 panels: [{"index": 1, "text": "What is this place?"}, {"index": 2, "text": ""}]`
+
+  // Build Gemini request body.
+  const body = {
+    contents: [{
+      parts: [
+        { text: prompt },
+        ...images.map(img => ({ inline_data: { mime_type: img.mime, data: img.b64 } })),
+      ],
+    }],
+    generationConfig: {
+      temperature: 0.1,
+      maxOutputTokens: 4096,
+    },
+  }
+
+  const MAX_RETRIES = 4
+  const BASE_DELAY_MS = 2000
+  let lastErr: unknown = null
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 60000) // 60s per batch
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+      clearTimeout(timeout)
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '')
+        throw new Error(`Gemini API ${res.status}: ${errText.slice(0, 200)}`)
+      }
+
+      const data = await res.json() as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+        error?: { message?: string }
+      }
+
+      if (data.error) {
+        throw new Error(`Gemini error: ${data.error.message || JSON.stringify(data.error)}`)
+      }
+
+      const raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? ''
+      const texts = parseBatchResponse(raw, images.length)
+
+      // Cache each panel's transcription (same cache as z-ai).
+      for (let i = 0; i < imgPaths.length && i < texts.length; i++) {
+        if (texts[i]) {
+          void setVlmCached(vlmCacheKey(imgPaths[i]), texts[i])
+        }
+      }
+      return texts
+    } catch (err) {
+      lastErr = err
+      const msg = err instanceof Error ? err.message : String(err)
+      // 429 = rate limited. Don't retry — the rate limit won't reset in 2-16s,
+      // and the circuit breaker + z-ai fallback handle it. Throwing immediately
+      // saves 30s of wasted retry backoff per batch.
+      const is429 = msg.includes('429')
+      if (is429) {
+        throw err
+      }
+      const isRetryable = /5\d{2}|server error|timeout|econnreset|socket hang up|fetch failed|aborted/i.test(msg)
+
+      if (!isRetryable || attempt === MAX_RETRIES) {
+        throw err
+      }
+
+      const delayMs = BASE_DELAY_MS * Math.pow(2, attempt)
+      console.warn(
+        `[VLM:gemini] batch (panels ${batchStart + 1}-${batchStart + images.length}) attempt ${attempt + 1}/${MAX_RETRIES + 1} failed (${msg.slice(0, 80)}) — retrying in ${delayMs}ms`,
       )
       await sleep(delayMs)
     }
