@@ -71,10 +71,14 @@ export function useJobProgress(jobId: string | null): UseJobProgressResult {
       setConnected(true);
     };
     const onStatus = (payload: ServerEvent) => {
-      if (payload.type === "status" && payload.job) setJob(payload.job);
+      // Filter by jobId — the socket is a shared singleton, so events from
+      // other jobs (if the user switches jobs) must not leak into this view.
+      if (payload.type === "status" && payload.job && payload.job.id === jobId) setJob(payload.job);
     };
     const onLog = (payload: ServerEvent) => {
       if (payload.type === "log" && payload.log) {
+        // JobLogEntry has a jobId field — filter to avoid cross-job leakage.
+        if (payload.log.jobId && payload.log.jobId !== jobId) return;
         setLogs((prev) => {
           const next = [...prev, payload.log as JobLogEntry];
           // Cap at 500 lines to avoid memory bloat.
@@ -84,6 +88,8 @@ export function useJobProgress(jobId: string | null): UseJobProgressResult {
     };
     const onProgress = (payload: ServerEvent) => {
       if (payload.type !== "progress") return;
+      // Filter by jobId to prevent events from a different job updating this view.
+      if (payload.jobId !== jobId) return;
       setJob((prev) =>
         prev
           ? {
@@ -106,6 +112,7 @@ export function useJobProgress(jobId: string | null): UseJobProgressResult {
     };
     const onDone = (payload: ServerEvent) => {
       if (payload.type !== "done") return;
+      if (payload.jobId !== jobId) return;
       setJob((prev) =>
         prev
           ? {
@@ -120,6 +127,7 @@ export function useJobProgress(jobId: string | null): UseJobProgressResult {
     };
     const onError = (payload: ServerEvent) => {
       if (payload.type !== "error") return;
+      if (payload.jobId !== jobId) return;
       setJob((prev) =>
         prev
           ? { ...prev, status: "error", error: payload.error ?? "Unknown error" }
@@ -128,6 +136,7 @@ export function useJobProgress(jobId: string | null): UseJobProgressResult {
     };
     const onCancelled = (payload: ServerEvent) => {
       if (payload.type !== "cancelled") return;
+      if (payload.jobId !== jobId) return;
       setJob((prev) => (prev ? { ...prev, status: "cancelled" } : prev));
     };
 

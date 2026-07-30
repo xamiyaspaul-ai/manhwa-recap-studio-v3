@@ -90,6 +90,9 @@ export function VideoResult({ job }: VideoResultProps) {
           controls
           className="w-full max-h-[480px]"
           preload="metadata"
+          onError={(e) => {
+            console.error("Video playback error:", e);
+          }}
         >
           <source src={`/api/download/${job.id}`} type="video/mp4" />
           Your browser does not support the video tag.
