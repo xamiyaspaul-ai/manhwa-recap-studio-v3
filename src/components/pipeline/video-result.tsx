@@ -42,8 +42,8 @@ export function VideoResult({ job }: VideoResultProps) {
       }
       setArchiveProvider(data.provider);
       toast({
-        title: "Archived to cloud",
-        description: `Video uploaded to ${data.provider === "gdrive" ? "Google Drive" : "Mega"} and local file freed.`,
+        title: "Archived to Mega",
+        description: "Video uploaded to Mega and local file freed.",
       });
     } catch (e) {
       toast({
@@ -75,7 +75,7 @@ export function VideoResult({ job }: VideoResultProps) {
           {archiveProvider && (
             <Badge variant="outline" className="border-sky-500/30 text-sky-400 gap-1">
               <Cloud className="h-3 w-3" />
-              {archiveProvider === "gdrive" ? "Google Drive" : "Mega"}
+              Mega
             </Badge>
           )}
           <Badge variant="outline" className="border-emerald-500/30 text-emerald-400">
@@ -116,7 +116,7 @@ export function VideoResult({ job }: VideoResultProps) {
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-500/10 border border-sky-500/30">
             <Cloud className="h-3.5 w-3.5 text-sky-400" />
             <span className="text-xs font-medium text-sky-400">
-              Archived to {archiveProvider === "gdrive" ? "Google Drive" : "Mega"}
+              Archived to Mega
             </span>
           </div>
         ) : (

@@ -64,3 +64,7 @@ server.log
 upload/
 pipeline/models/
 data/cache/
+
+# Runtime artifacts
+.zscripts/dev.pid
+pipeline/__pycache__/

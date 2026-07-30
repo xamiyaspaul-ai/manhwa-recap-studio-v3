@@ -246,7 +246,7 @@ start everything; Ctrl+C to stop.
 | edge-tts | Free | Unlimited TTS |
 | **Total** | **$0/mo** | **~14 streaming videos online, unlimited archived** |
 
-For more than ~14 streaming videos, archive old ones to Google Drive (15 GB
+For more than ~14 streaming videos, archive old ones to Mega (20 GB
 free) or Terabox (1 TB free) — see the storage tiering notes in the chat.
 
 ---

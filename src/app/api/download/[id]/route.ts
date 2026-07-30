@@ -84,7 +84,7 @@ export async function GET(
     }
 
     if (!filePath) {
-      // ---- 2b. Cloud archive restore (GDrive / Mega) -------------------------
+      // ---- 2b. Cloud archive restore (Mega) -------------------------------
       // Local file was freed after archiving — restore from cloud to a temp
       // file, then stream it with Range support. Uses a 1-hour cache so repeat
       // views don't re-download.

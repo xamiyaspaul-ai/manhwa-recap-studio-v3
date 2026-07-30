@@ -86,7 +86,7 @@ export async function POST(
     const safeTitle = (job.mangaTitle || "recap").replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "");
     const filename = `${safeTitle}_recap.mp4`;
 
-    // Upload to cloud (GDrive → Mega fallback).
+    // Upload to Mega.
     const result = await archiveVideo(filePath, filename);
 
     // Store archive info in DB.
