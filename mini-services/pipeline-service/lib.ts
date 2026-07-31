@@ -977,18 +977,70 @@ export async function generateImageNarrations(
     })
   }
   const totalBatches = batches.length
-  // Check providers BEFORE using them (const is block-scoped, not hoisted).
-  const useGroq = isGroqVlmConfigured()
-  const useGemini = isGeminiConfigured()
-  const useOpenRouter = isOpenRouterVlmConfigured()
-  const providerList = [
-    useGroq ? 'groq' : null,
-    useGemini ? 'gemini' : null,
-    useOpenRouter ? 'openrouter' : null,
-    'z-ai', // z-ai is always available (built-in SDK)
-  ].filter(Boolean).join(' + ')
+
+  // ── PRE-FLIGHT: test each VLM provider before transcription starts ──
+  // This sends a tiny test request to each configured provider to check if
+  // the API key is valid and the service is reachable. Only providers that
+  // pass the test are added to the active pool — no wasted time on dead keys.
+  type VlmProvider = 'groq' | 'gemini' | 'openrouter' | 'z-ai'
+  const activeProviders: VlmProvider[] = ['z-ai'] // z-ai is always available
+
+  async function testProvider(provider: VlmProvider): Promise<boolean> {
+    try {
+      if (provider === 'groq' && process.env.GROQ_API_KEY) {
+        const res = await fetch('https://api.groq.com/openai/v1/models', {
+          headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
+          signal: AbortSignal.timeout(10000),
+        })
+        if (res.ok) { console.log('[VLM] ✓ Groq key is valid'); return true }
+        console.warn(`[VLM] ✗ Groq key invalid (HTTP ${res.status})`)
+        return false
+      }
+      if (provider === 'gemini' && process.env.GEMINI_API_KEY) {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`,
+          { signal: AbortSignal.timeout(10000) },
+        )
+        if (res.ok) { console.log('[VLM] ✓ Gemini key is valid'); return true }
+        console.warn(`[VLM] ✗ Gemini key invalid (HTTP ${res.status})`)
+        return false
+      }
+      if (provider === 'openrouter' && process.env.OPENROUTER_API_KEY) {
+        const res = await fetch('https://openrouter.ai/api/v1/models', {
+          headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
+          signal: AbortSignal.timeout(10000),
+        })
+        if (res.ok) { console.log('[VLM] ✓ OpenRouter key is valid'); return true }
+        console.warn(`[VLM] ✗ OpenRouter key invalid (HTTP ${res.status})`)
+        return false
+      }
+    } catch (e) {
+      console.warn(`[VLM] ✗ ${provider} pre-flight test failed: ${e instanceof Error ? e.message.slice(0, 80) : e}`)
+    }
+    return false
+  }
+
+  // Test all configured providers in parallel
+  console.log('[VLM] Pre-flight: testing API keys...')
+  const tests = await Promise.all([
+    testProvider('groq'),
+    testProvider('gemini'),
+    testProvider('openrouter'),
+  ])
+  if (tests[0]) activeProviders.push('groq')
+  if (tests[1]) activeProviders.push('gemini')
+  if (tests[2]) activeProviders.push('openrouter')
+
+  // z-ai doesn't need a key test (built-in SDK) but we note its status
+  console.log('[VLM] ✓ z-ai is always available (built-in SDK)')
+
+  if (activeProviders.length === 1 && activeProviders[0] === 'z-ai') {
+    console.warn('[VLM] ⚠ No external VLM keys are valid — using z-ai only (may be rate-limited)')
+    console.warn('[VLM] ⚠ Get a free Groq key at console.groq.com/keys for faster transcription')
+  }
+
   console.log(
-    `[VLM] transcribing ${imagePaths.length} images in ${totalBatches} batches (${BATCH_SIZE}/batch) with concurrency ${CONCURRENCY} [${providerList}]`,
+    `[VLM] transcribing ${imagePaths.length} images in ${totalBatches} batches (${BATCH_SIZE}/batch) with concurrency ${CONCURRENCY} [${activeProviders.join(' + ')}]`,
   )
 
   // Atomic progress counter — shared across all concurrent workers.
@@ -999,57 +1051,33 @@ export async function generateImageNarrations(
     }
   }
 
-  // Round-robin counter — distributes batches across providers.
+  // Round-robin counter — distributes batches evenly across active providers.
   let roundRobinCounter = 0
 
-  // Circuit breakers: disable a provider after N consecutive 429s/403s.
-  let groqConsecutiveErrors = 0
-  let groqDisabled = false
-  const GROQ_ERROR_THRESHOLD = 3
+  // Circuit breakers: track errors per provider, disable after threshold.
+  const disabledProviders = new Set<VlmProvider>()
+  const providerErrorCounts: Record<string, number> = {}
+  const ERROR_THRESHOLD = 3
 
-  let openRouterConsecutiveErrors = 0
-  let openRouterDisabled = false
-  const OPENROUTER_ERROR_THRESHOLD = 3
-
-  let geminiConsecutive429s = 0
-  let geminiDisabled = false
-  const GEMINI_429_THRESHOLD = 3
+  function pickProvider(): VlmProvider {
+    // Get providers that are still active (not disabled by circuit breaker)
+    const available = activeProviders.filter((p) => !disabledProviders.has(p))
+    if (available.length === 0) {
+      // All disabled — fall back to z-ai as last resort
+      return 'z-ai'
+    }
+    // Even round-robin: each provider gets an equal share of batches.
+    // This maximizes throughput — more working providers = faster transcription.
+    const idx = roundRobinCounter++ % available.length
+    return available[idx]
+  }
 
   // Process a single batch — writes results into the shared array at the
   // batch's start index (disjoint from other batches, so no locking needed).
   async function processBatch(batch: (typeof batches)[0]): Promise<void> {
     const { images, startIdx, num } = batch
 
-    // Provider selection (priority order):
-    //   1. Groq (fastest — LPU hardware). 2 of every 4 batches.
-    //   2. Gemini. 1 of every 4 batches (if configured).
-    //   3. OpenRouter (free LLaVA/Qwen-VL). 1 of every 4 batches (if configured).
-    //   4. z-ai (always available as the reliable fallback).
-    // Circuit breakers disable a provider after consecutive errors.
-    const rr = roundRobinCounter++
-    let providerLabel: 'groq' | 'gemini' | 'openrouter' | 'z-ai'
-
-    if (useGroq && !groqDisabled) {
-      if (rr % 4 < 2) {
-        providerLabel = 'groq'
-      } else if (rr % 4 === 2 && useGemini && !geminiDisabled) {
-        providerLabel = 'gemini'
-      } else if (rr % 4 === 3 && useOpenRouter && !openRouterDisabled) {
-        providerLabel = 'openrouter'
-      } else if (rr % 4 === 2 && useOpenRouter && !openRouterDisabled) {
-        providerLabel = 'openrouter'
-      } else if (rr % 4 === 3 && useGemini && !geminiDisabled) {
-        providerLabel = 'gemini'
-      } else {
-        providerLabel = 'z-ai'
-      }
-    } else if (useGemini && !geminiDisabled) {
-      providerLabel = rr % 2 === 0 ? 'gemini' : (useOpenRouter && !openRouterDisabled ? 'openrouter' : 'z-ai')
-    } else if (useOpenRouter && !openRouterDisabled) {
-      providerLabel = rr % 2 === 0 ? 'openrouter' : 'z-ai'
-    } else {
-      providerLabel = 'z-ai'
-    }
+    const providerLabel = pickProvider()
 
     let batchTexts: string[]
     let succeeded = false
@@ -1071,31 +1099,14 @@ export async function generateImageNarrations(
       const isRateLimit = errMsg.includes('429') || errMsg.includes('rate')
       const isForbidden = errMsg.includes('403') || errMsg.includes('Forbidden')
 
-      // --- Circuit breakers ---
-      // Track consecutive errors per provider. After N, disable it for the
-      // rest of this transcription to stop wasting time on retries.
-      if (providerLabel === 'groq' && (isRateLimit || isForbidden)) {
-        groqConsecutiveErrors++
-        if (groqConsecutiveErrors >= GROQ_ERROR_THRESHOLD && !groqDisabled) {
-          groqDisabled = true
+      // --- Unified circuit breaker ---
+      // Track consecutive errors per provider. After N errors, disable it.
+      if (isRateLimit || isForbidden) {
+        providerErrorCounts[providerLabel] = (providerErrorCounts[providerLabel] || 0) + 1
+        if (providerErrorCounts[providerLabel] >= ERROR_THRESHOLD && !disabledProviders.has(providerLabel)) {
+          disabledProviders.add(providerLabel)
           console.warn(
-            `[VLM:groq] circuit breaker tripped after ${groqConsecutiveErrors} consecutive errors — disabling Groq for this transcription`,
-          )
-        }
-      } else if (providerLabel === 'gemini' && isRateLimit) {
-        geminiConsecutive429s++
-        if (geminiConsecutive429s >= GEMINI_429_THRESHOLD && !geminiDisabled) {
-          geminiDisabled = true
-          console.warn(
-            `[VLM:gemini] circuit breaker tripped after ${geminiConsecutive429s} consecutive 429s — disabling Gemini for this transcription`,
-          )
-        }
-      } else if (providerLabel === 'openrouter' && (isRateLimit || isForbidden)) {
-        openRouterConsecutiveErrors++
-        if (openRouterConsecutiveErrors >= OPENROUTER_ERROR_THRESHOLD && !openRouterDisabled) {
-          openRouterDisabled = true
-          console.warn(
-            `[VLM:openrouter] circuit breaker tripped after ${openRouterConsecutiveErrors} consecutive errors — disabling OpenRouter for this transcription`,
+            `[VLM:${providerLabel}] circuit breaker tripped after ${providerErrorCounts[providerLabel]} errors — disabled for this transcription`,
           )
         }
       }
