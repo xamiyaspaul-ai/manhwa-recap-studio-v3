@@ -980,9 +980,11 @@ export async function generateImageNarrations(
   // Check providers BEFORE using them (const is block-scoped, not hoisted).
   const useGroq = isGroqVlmConfigured()
   const useGemini = isGeminiConfigured()
+  const useOpenRouter = isOpenRouterVlmConfigured()
   const providerList = [
     useGroq ? 'groq' : null,
     useGemini ? 'gemini' : null,
+    useOpenRouter ? 'openrouter' : null,
     'z-ai', // z-ai is always available (built-in SDK)
   ].filter(Boolean).join(' + ')
   console.log(
@@ -1005,6 +1007,10 @@ export async function generateImageNarrations(
   let groqDisabled = false
   const GROQ_ERROR_THRESHOLD = 3
 
+  let openRouterConsecutiveErrors = 0
+  let openRouterDisabled = false
+  const OPENROUTER_ERROR_THRESHOLD = 3
+
   let geminiConsecutive429s = 0
   let geminiDisabled = false
   const GEMINI_429_THRESHOLD = 3
@@ -1015,28 +1021,32 @@ export async function generateImageNarrations(
     const { images, startIdx, num } = batch
 
     // Provider selection (priority order):
-    //   1. Groq (fastest — LPU hardware, 30 req/min free). 2 of every 3 batches.
-    //   2. Gemini (backup vision provider). Every 3rd batch if Groq not configured.
-    //   3. z-ai (always available as the reliable fallback).
-    //
-    // When Groq is configured, it gets 2/3 of batches (primary), z-ai gets 1/3
-    // (fallback). Gemini is only used if Groq isn't configured.
+    //   1. Groq (fastest — LPU hardware). 2 of every 4 batches.
+    //   2. Gemini. 1 of every 4 batches (if configured).
+    //   3. OpenRouter (free LLaVA/Qwen-VL). 1 of every 4 batches (if configured).
+    //   4. z-ai (always available as the reliable fallback).
     // Circuit breakers disable a provider after consecutive errors.
     const rr = roundRobinCounter++
-    let providerLabel: 'groq' | 'gemini' | 'z-ai'
+    let providerLabel: 'groq' | 'gemini' | 'openrouter' | 'z-ai'
 
     if (useGroq && !groqDisabled) {
-      // Groq primary: batches 0,1,3,4,6,7... (2 of 3)
-      if (rr % 3 !== 2) {
+      if (rr % 4 < 2) {
         providerLabel = 'groq'
-      } else if (useGemini && !geminiDisabled) {
+      } else if (rr % 4 === 2 && useGemini && !geminiDisabled) {
+        providerLabel = 'gemini'
+      } else if (rr % 4 === 3 && useOpenRouter && !openRouterDisabled) {
+        providerLabel = 'openrouter'
+      } else if (rr % 4 === 2 && useOpenRouter && !openRouterDisabled) {
+        providerLabel = 'openrouter'
+      } else if (rr % 4 === 3 && useGemini && !geminiDisabled) {
         providerLabel = 'gemini'
       } else {
         providerLabel = 'z-ai'
       }
     } else if (useGemini && !geminiDisabled) {
-      // No Groq — Gemini gets 1/3, z-ai gets 2/3
-      providerLabel = rr % 3 === 2 ? 'gemini' : 'z-ai'
+      providerLabel = rr % 2 === 0 ? 'gemini' : (useOpenRouter && !openRouterDisabled ? 'openrouter' : 'z-ai')
+    } else if (useOpenRouter && !openRouterDisabled) {
+      providerLabel = rr % 2 === 0 ? 'openrouter' : 'z-ai'
     } else {
       providerLabel = 'z-ai'
     }
@@ -1049,6 +1059,8 @@ export async function generateImageNarrations(
         batchTexts = await narrateImageBatchGroq(images, startIdx)
       } else if (providerLabel === 'gemini') {
         batchTexts = await narrateImageBatchGemini(images, startIdx)
+      } else if (providerLabel === 'openrouter') {
+        batchTexts = await narrateImageBatchOpenRouter(images, startIdx)
       } else {
         batchTexts = await narrateImageBatch(images, startIdx)
       }
@@ -1076,6 +1088,14 @@ export async function generateImageNarrations(
           geminiDisabled = true
           console.warn(
             `[VLM:gemini] circuit breaker tripped after ${geminiConsecutive429s} consecutive 429s — disabling Gemini for this transcription`,
+          )
+        }
+      } else if (providerLabel === 'openrouter' && (isRateLimit || isForbidden)) {
+        openRouterConsecutiveErrors++
+        if (openRouterConsecutiveErrors >= OPENROUTER_ERROR_THRESHOLD && !openRouterDisabled) {
+          openRouterDisabled = true
+          console.warn(
+            `[VLM:openrouter] circuit breaker tripped after ${openRouterConsecutiveErrors} consecutive errors — disabling OpenRouter for this transcription`,
           )
         }
       }
@@ -1595,6 +1615,136 @@ async function narrateImageBatchGroq(imgPaths: string[], batchStart: number): Pr
       console.warn(
         `[VLM:groq] batch (panels ${batchStart + 1}-${batchStart + images.length}) attempt ${attempt + 1}/${MAX_RETRIES + 1} failed (${msg.slice(0, 80)}) — retrying in ${delayMs}ms`,
       )
+      await sleep(delayMs)
+    }
+  }
+
+  throw lastErr
+}
+
+// ---------------------------------------------------------------------------
+// OPENROUTER VLM — fourth provider (access free LLaVA, Qwen-VL, etc.)
+// OpenRouter is an API gateway that provides access to many models, including
+// free vision models. Uses OpenAI-compatible API format.
+// ---------------------------------------------------------------------------
+
+export function isOpenRouterVlmConfigured(): boolean {
+  return Boolean(process.env.OPENROUTER_API_KEY)
+}
+
+async function narrateImageBatchOpenRouter(imgPaths: string[], batchStart: number): Promise<string[]> {
+  // Check cache first (same cache as other providers).
+  const cachedResults: (string | null)[] = []
+  let allCached = true
+  for (const imgPath of imgPaths) {
+    const cached = await getVlmCached(vlmCacheKey(imgPath))
+    cachedResults.push(cached)
+    if (cached === null) allCached = false
+  }
+  if (allCached) {
+    console.log(`[VLM:openrouter] cache hit — all ${imgPaths.length} panels cached, skipping API call`)
+    return cachedResults as string[]
+  }
+
+  const apiKey = process.env.OPENROUTER_API_KEY!
+  // Default to free Qwen-VL model. Override via OPENROUTER_VLM_MODEL env var.
+  // Other free options: "meta-llama/llama-3.2-11b-vision-instruct:free"
+  const model = process.env.OPENROUTER_VLM_MODEL || 'qwen/qwen-2-vl-7b-instruct:free'
+  const url = 'https://openrouter.ai/api/v1/chat/completions'
+
+  // Read + base64-encode each image.
+  const images: Array<{ mime: string; b64: string }> = []
+  for (const imgPath of imgPaths) {
+    const buf = await fs.readFile(imgPath)
+    const ext = path.extname(imgPath).toLowerCase()
+    const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
+    images.push({ mime, b64: buf.toString('base64') })
+  }
+
+  // Same prompt as other providers.
+  const prompt =
+    `You are a precise transcriber for webtoon/manhwa panels, not a narrator. ` +
+    `I am sending you ${images.length} separate panel images, labeled Panel 1 through Panel ${images.length} ` +
+    `(in the order they appear below). For EACH panel, transcribe ONLY the actual text you can see inside ` +
+    `speech bubbles, thought bubbles, and caption/narration boxes — in the order a reader would naturally ` +
+    `read them (top to bottom, left to right within the panel). Translate to natural English if not already ` +
+    `in English, preserving meaning and tone.\n\n` +
+    `RESPONSE FORMAT: Return a JSON array with exactly ${images.length} elements, one per panel in order. ` +
+    `Each element is an object: {"index": <1-based panel number>, "text": "<transcribed text or empty string>"}.\n` +
+    `Output ONLY the JSON array — no preamble, no markdown fences, no explanation.\n` +
+    `Example for 2 panels: [{"index": 1, "text": "What is this place?"}, {"index": 2, "text": ""}]`
+
+  const content = [
+    { type: 'text', text: prompt },
+    ...images.map(img => ({
+      type: 'image_url',
+      image_url: { url: `data:${img.mime};base64,${img.b64}` },
+    })),
+  ]
+
+  const body = {
+    model,
+    messages: [{ role: 'user', content }],
+    temperature: 0.1,
+    max_tokens: 4096,
+  }
+
+  const MAX_RETRIES = 3
+  const BASE_DELAY_MS = 2000
+  let lastErr: unknown = null
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 60000)
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': 'https://github.com/zainrana558/manhwa-recap-studio-v3',
+          'X-Title': 'Manhwa Recap Studio',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+      clearTimeout(timeout)
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '')
+        throw new Error(`OpenRouter API ${res.status}: ${errText.slice(0, 200)}`)
+      }
+
+      const data = await res.json() as {
+        choices?: Array<{ message?: { content?: string } }>
+        error?: { message?: string }
+      }
+
+      if (data.error) {
+        throw new Error(`OpenRouter error: ${data.error.message || JSON.stringify(data.error)}`)
+      }
+
+      const raw = data.choices?.[0]?.message?.content?.trim() ?? ''
+      const texts = parseBatchResponse(raw, images.length)
+
+      // Cache each panel's transcription.
+      for (let i = 0; i < imgPaths.length && i < texts.length; i++) {
+        if (texts[i]) {
+          void setVlmCached(vlmCacheKey(imgPaths[i]), texts[i])
+        }
+      }
+      return texts
+    } catch (err) {
+      lastErr = err
+      const msg = err instanceof Error ? err.message : String(err)
+      // 429 = rate limited. Don't retry — fail fast.
+      if (msg.includes('429')) throw err
+      // 403 = forbidden. Don't retry.
+      if (msg.includes('403')) throw err
+      const isRetryable = /5\d{2}|server error|timeout|econnreset|socket hang up|fetch failed|aborted/i.test(msg)
+      if (!isRetryable || attempt === MAX_RETRIES) throw err
+      const delayMs = BASE_DELAY_MS * Math.pow(2, attempt)
+      console.warn(`[VLM:openrouter] batch retry ${attempt + 1}/${MAX_RETRIES + 1} failed (${msg.slice(0, 80)}) — retrying in ${delayMs}ms`)
       await sleep(delayMs)
     }
   }

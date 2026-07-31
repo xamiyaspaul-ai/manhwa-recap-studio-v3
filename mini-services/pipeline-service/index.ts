@@ -814,6 +814,21 @@ async function processJob(jobId: string): Promise<void> {
   await emitStatus(jobId)
   await emitLog(jobId, 'info', 'transcribe', 'Transcribing speech bubbles and captions from each panel image')
 
+  // Set VLM API keys from the per-job record (user-entered in the UI).
+  // These override any keys set in .env — per-job keys take priority.
+  if (job.groqKey && !process.env.GROQ_API_KEY) {
+    process.env.GROQ_API_KEY = job.groqKey
+    console.log('[VLM] Using per-job Groq API key for transcription')
+  }
+  if (job.geminiKey && !process.env.GEMINI_API_KEY) {
+    process.env.GEMINI_API_KEY = job.geminiKey
+    console.log('[VLM] Using per-job Gemini API key for transcription')
+  }
+  if (job.openRouterKey && !process.env.OPENROUTER_API_KEY) {
+    process.env.OPENROUTER_API_KEY = job.openRouterKey
+    console.log('[VLM] Using per-job OpenRouter API key for transcription')
+  }
+
   // Reload chapters to get the latest state.
   const scrapedChapters = await db.chapter.findMany({
     where: { jobId, status: 'scraped' },

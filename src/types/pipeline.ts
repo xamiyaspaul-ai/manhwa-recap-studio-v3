@@ -136,6 +136,8 @@ export interface CreateJobInput {
   voice: string;
   translate: boolean;
   groqKey?: string;
+  geminiKey?: string;
+  openRouterKey?: string;
   openaiKey?: string;
   bgmPath?: string | null; // BGM filename (relative to data/bgm/), null = default
   useBgm?: boolean; // whether to overlay BGM
@@ -149,6 +151,8 @@ export interface BgmTrack {
 
 export interface AppSettings {
   groqKey: string;
+  geminiKey: string;
+  openRouterKey: string;
   openaiKey: string;
   defaultVoice: string;
   defaultLanguage: string;

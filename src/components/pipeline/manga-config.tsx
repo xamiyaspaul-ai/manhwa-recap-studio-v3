@@ -120,6 +120,8 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
   const [chapterLimit, setChapterLimit] = useState(5);
   const [voice, setVoice] = useState("en-US-AndrewNeural");
   const [groqKey, setGroqKey] = useState("");
+  const [geminiKey, setGeminiKey] = useState("");
+  const [openRouterKey, setOpenRouterKey] = useState("");
   const [translate, setTranslate] = useState(true);
 
   const [starting, setStarting] = useState(false);
@@ -144,6 +146,8 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
         const s = settingsRes.settings ?? settingsRes;
         setSettings(s);
         setGroqKey(s.groqKey ?? "");
+        setGeminiKey(s.geminiKey ?? "");
+        setOpenRouterKey(s.openRouterKey ?? "");
         setVoice(s.defaultVoice ?? "en-US-AndrewNeural");
         setChapterLimit(s.defaultChapterLimit ?? 5);
 
@@ -184,6 +188,8 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           groqKey,
+          geminiKey,
+          openRouterKey,
           defaultVoice: voice,
           defaultLanguage: language,
           defaultChapterLimit: chapterLimit,
@@ -203,6 +209,8 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
           voice,
           translate,
           groqKey: groqKey || undefined,
+          geminiKey: geminiKey || undefined,
+          openRouterKey: openRouterKey || undefined,
           useBgm: false,
         }),
       });
@@ -217,7 +225,7 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
     } finally {
       setStarting(false);
     }
-  }, [groqKey, voice, language, chapterLimit, translate, manga, onJobCreated]);
+  }, [groqKey, geminiKey, openRouterKey, voice, language, chapterLimit, translate, manga, onJobCreated]);
 
   // --- Voice preview ---
   // Fetches a short edge-tts sample for the selected voice and plays it.
@@ -515,33 +523,74 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
           <Switch checked={translate} onCheckedChange={setTranslate} />
         </div>
 
-        {/* Groq key */}
-        <div className="space-y-2">
-          <Label className="flex items-center gap-2 text-sm font-medium" htmlFor="groqKey">
+        {/* VLM API Keys — for panel text transcription */}
+        <div className="space-y-3 p-4 rounded-lg bg-muted/30 border border-border">
+          <div className="flex items-center gap-2">
             <Key className="h-4 w-4 text-muted-foreground" />
-            Groq API key
-            <span className="text-xs text-muted-foreground font-normal">(optional — for translation &amp; narration)</span>
-          </Label>
-          <Input
-            id="groqKey"
-            type="password"
-            value={groqKey}
-            onChange={(e) => setGroqKey(e.target.value)}
-            placeholder="gsk_…"
-            className="font-mono text-sm"
-          />
+            <span className="text-sm font-medium">VLM API Keys</span>
+            <span className="text-xs text-muted-foreground">(for reading panel text)</span>
+          </div>
           <p className="text-xs text-muted-foreground">
-            Get a free key at{" "}
-            <a
-              href="https://console.groq.com/keys"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary underline underline-offset-2 hover:text-primary/80"
-            >
-              console.groq.com/keys
-            </a>
-            . Without a key, narration uses the raw VLM summary verbatim (still works, less polished).
+            At least one key is recommended for transcription. The pipeline uses them
+            in round-robin for speed + reliability. All have free tiers.
           </p>
+
+          {/* Groq */}
+          <div className="space-y-1">
+            <Label className="text-xs font-medium" htmlFor="groqKey">
+              Groq <span className="text-muted-foreground">(fastest — LPU hardware)</span>
+            </Label>
+            <Input
+              id="groqKey"
+              type="password"
+              value={groqKey}
+              onChange={(e) => setGroqKey(e.target.value)}
+              placeholder="gsk_…"
+              className="font-mono text-sm h-8"
+            />
+            <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer"
+               className="text-[10px] text-primary underline underline-offset-2 hover:text-primary/80">
+              console.groq.com/keys (free)
+            </a>
+          </div>
+
+          {/* Gemini */}
+          <div className="space-y-1">
+            <Label className="text-xs font-medium" htmlFor="geminiKey">
+              Google Gemini <span className="text-muted-foreground">(15 req/min free)</span>
+            </Label>
+            <Input
+              id="geminiKey"
+              type="password"
+              value={geminiKey}
+              onChange={(e) => setGeminiKey(e.target.value)}
+              placeholder="AIza…"
+              className="font-mono text-sm h-8"
+            />
+            <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer"
+               className="text-[10px] text-primary underline underline-offset-2 hover:text-primary/80">
+              aistudio.google.com/apikey (free)
+            </a>
+          </div>
+
+          {/* OpenRouter */}
+          <div className="space-y-1">
+            <Label className="text-xs font-medium" htmlFor="openRouterKey">
+              OpenRouter <span className="text-muted-foreground">(access free LLaVA, Qwen-VL)</span>
+            </Label>
+            <Input
+              id="openRouterKey"
+              type="password"
+              value={openRouterKey}
+              onChange={(e) => setOpenRouterKey(e.target.value)}
+              placeholder="sk-or-…"
+              className="font-mono text-sm h-8"
+            />
+            <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer"
+               className="text-[10px] text-primary underline underline-offset-2 hover:text-primary/80">
+              openrouter.ai/keys (free tier available)
+            </a>
+          </div>
         </div>
 
         {error && (

@@ -6,6 +6,8 @@ export const dynamic = "force-dynamic";
 
 const DEFAULTS: AppSettings = {
   groqKey: "",
+  geminiKey: "",
+  openRouterKey: "",
   openaiKey: "",
   defaultVoice: "en-US-AndrewNeural",
   defaultLanguage: "en",
@@ -14,6 +16,8 @@ const DEFAULTS: AppSettings = {
 
 const KEYS: (keyof AppSettings)[] = [
   "groqKey",
+  "geminiKey",
+  "openRouterKey",
   "openaiKey",
   "defaultVoice",
   "defaultLanguage",
@@ -38,6 +42,8 @@ async function readAllSettings(): Promise<AppSettings> {
 
   return {
     groqKey: map.get("groqKey") ?? DEFAULTS.groqKey,
+    geminiKey: map.get("geminiKey") ?? DEFAULTS.geminiKey,
+    openRouterKey: map.get("openRouterKey") ?? DEFAULTS.openRouterKey,
     openaiKey: map.get("openaiKey") ?? DEFAULTS.openaiKey,
     defaultVoice: map.get("defaultVoice") ?? DEFAULTS.defaultVoice,
     defaultLanguage: map.get("defaultLanguage") ?? DEFAULTS.defaultLanguage,

@@ -42,6 +42,8 @@ type JobRow = {
   archiveFileId: string | null;
   error: string | null;
   groqKey: string | null;
+  geminiKey: string | null;
+  openRouterKey: string | null;
   openaiKey: string | null;
   voice: string;
   chapterLimit: number;

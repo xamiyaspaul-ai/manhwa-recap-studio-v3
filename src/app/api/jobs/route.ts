@@ -148,6 +148,8 @@ export async function POST(req: NextRequest) {
         outputVideo: null,
         error: null,
         groqKey: body.groqKey ?? null,
+        geminiKey: body.geminiKey ?? null,
+        openRouterKey: body.openRouterKey ?? null,
         openaiKey: body.openaiKey ?? null,
         voice,
         chapterLimit,

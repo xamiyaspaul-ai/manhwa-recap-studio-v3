@@ -53,7 +53,9 @@ model Job {
   archiveProvider String? // "mega" | null — cloud archive provider
   archiveFileId   String? // Mega share URL (https://mega.nz/file/...#...)
   error       String?
-  groqKey     String?   // per-job Groq api key (user-provided)
+  groqKey     String?   // per-job Groq api key (user-provided, also used for VLM)
+  geminiKey   String?   // per-job Google Gemini API key (for VLM)
+  openRouterKey String? // per-job OpenRouter API key (for VLM)
   openaiKey   String?   // per-job OpenAI api key (optional)
   voice       String    @default("en-US-AndrewNeural")
   chapterLimit Int      @default(0) // 0 = all chapters
