@@ -1268,6 +1268,44 @@ async function processJob(jobId: string): Promise<void> {
       },
     })
     await emitLog(jobId, 'success', 'done', `Pipeline complete. Output: ${outName}`)
+
+    // -----------------------------
+    // YOUTUBE OPTIMIZATION — generate thumbnail + YouTube-ready encode + metadata.
+    // Runs after the video is rendered, before the "done" status is emitted.
+    // All free tools: ffmpeg (re-encode) + PIL (thumbnail).
+    // -----------------------------
+    try {
+      await emitLog(jobId, 'info', 'done', 'Generating YouTube thumbnail + optimized encode...')
+      const ytScript = path.join(PROJECT_ROOT, 'pipeline', 'youtube_optimize.py')
+      const ytOutputDir = path.join(outputDir(jobId), 'youtube')
+      const ytResult = spawnSync(PYTHON_BIN, [
+        ytScript,
+        '--video', outFile,
+        '--title', job.mangaTitle,
+        '--cover', job.coverUrl || '',
+        '--chapters', String(job.totalChapters),
+        '--images', String(job.totalImages),
+        '--output-dir', ytOutputDir,
+      ], {
+        encoding: 'utf8',
+        timeout: 600000, // 10 min max for re-encode
+        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      })
+
+      if (ytResult.status === 0) {
+        await emitLog(jobId, 'success', 'done', 'YouTube-ready video + thumbnail + metadata generated')
+        // Log the output paths for the user
+        const ytLog = (ytResult.stdout || '').split('\n').filter(l => l.includes('[YT]')).slice(-6)
+        for (const line of ytLog) {
+          await emitLog(jobId, 'info', 'done', line.replace('[YT] ', ''))
+        }
+      } else {
+        await emitLog(jobId, 'warn', 'done', `YouTube optimization failed (non-fatal): ${(ytResult.stderr || '').slice(-200)}`)
+      }
+    } catch (ytErr) {
+      await emitLog(jobId, 'warn', 'done', `YouTube optimization error (non-fatal): ${ytErr instanceof Error ? ytErr.message : ytErr}`)
+    }
+
     io.to(`job:${jobId}`).emit('done', { type: 'done', jobId, outputVideo: outName })
     await emitStatus(jobId)
     console.log(`[job:${jobId}] done`)

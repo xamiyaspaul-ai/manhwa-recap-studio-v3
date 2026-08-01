@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Download, Film, CheckCircle2, Share2, Image as ImageIcon, BookOpen, Clock, Cloud, CloudUpload, Loader2, HardDrive } from "lucide-react";
+import { Download, Film, CheckCircle2, Share2, Image as ImageIcon, BookOpen, Clock, Cloud, CloudUpload, Loader2, HardDrive, Youtube } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { JobSummary } from "@/types/pipeline";
@@ -168,6 +168,26 @@ export function VideoResult({ job }: VideoResultProps) {
             {archiving ? "Archiving…" : "Archive to cloud"}
           </Button>
         )}
+      </div>
+
+      {/* YouTube-ready section */}
+      <div className="p-4 rounded-lg border border-red-500/20 bg-red-500/5 space-y-2">
+        <div className="flex items-center gap-2">
+          <Youtube className="h-4 w-4 text-red-500" />
+          <span className="text-sm font-medium">YouTube-Ready</span>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          A YouTube-optimized version is generated automatically with each video:
+        </p>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="px-2 py-1 rounded bg-card/50 border border-border">🎬 H.264 1080p + faststart</span>
+          <span className="px-2 py-1 rounded bg-card/50 border border-border">🖼️ 1280x720 thumbnail</span>
+          <span className="px-2 py-1 rounded bg-card/50 border border-border">📝 Title + description + tags</span>
+        </div>
+        <p className="text-[10px] text-muted-foreground">
+          Files are in the job's <code className="text-muted-foreground">output/youtube/</code> directory.
+          Upload the MP4 + thumbnail to YouTube Studio, then paste the metadata from <code className="text-muted-foreground">youtube_metadata.json</code>.
+        </p>
       </div>
 
       <p className="text-xs text-muted-foreground">
