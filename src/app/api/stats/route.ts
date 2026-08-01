@@ -10,12 +10,14 @@ export async function GET() {
     const completedJobs = await db.job.count({ where: { status: "done" } });
     const totalChapters = await db.chapter.count();
     const totalImages = await db.job.aggregate({ _sum: { totalImages: true } });
+    const archivedJobs = await db.job.count({ where: { status: "done", NOT: { archiveProvider: null } } });
 
     return NextResponse.json({
       totalJobs,
       completedJobs,
       totalChapters,
       totalImages: totalImages._sum.totalImages ?? 0,
+      archivedJobs,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

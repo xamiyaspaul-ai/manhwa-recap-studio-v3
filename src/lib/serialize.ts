@@ -45,6 +45,9 @@ type JobRow = {
   geminiKey: string | null;
   openRouterKey: string | null;
   openaiKey: string | null;
+  megaEmail: string | null;
+  megaPassword: string | null;
+  autoArchive: boolean;
   voice: string;
   chapterLimit: number;
   translate: boolean;
@@ -93,6 +96,7 @@ export function mapJob(job: JobRow): JobSummary {
     archiveProvider: (job as any).archiveProvider ?? null,
     archiveFileId: (job as any).archiveFileId ?? null,
     error: job.error,
+    autoArchive: (job as any).autoArchive ?? false,
     voice: job.voice,
     chapterLimit: job.chapterLimit,
     translate: job.translate,

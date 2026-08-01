@@ -122,6 +122,11 @@ export function VideoResult({ job }: VideoResultProps) {
               Archived to Mega
             </span>
           </div>
+        ) : job.autoArchive ? (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30">
+            <CloudUpload className="h-3.5 w-3.5 text-amber-400 animate-pulse" />
+            <span className="text-xs font-medium text-amber-400">Auto-archiving…</span>
+          </div>
         ) : (
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-card/50 border border-border">
             <HardDrive className="h-3.5 w-3.5 text-muted-foreground" />

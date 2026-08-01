@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { History, ChevronRight, Loader2, CheckCircle2, AlertCircle, Clock, XCircle, Trash2, Film } from "lucide-react";
+import { History, ChevronRight, Loader2, CheckCircle2, AlertCircle, Clock, XCircle, Trash2, Film, Cloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { JobSummary, JobStatus } from "@/types/pipeline";
@@ -174,6 +174,24 @@ export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
                     <span>{job.progress}%</span>
                     <span className="text-muted-foreground/40">·</span>
                     <span>{timeAgo(job.createdAt)}</span>
+                    {isDone && job.archiveProvider && (
+                      <>
+                        <span className="text-muted-foreground/40">·</span>
+                        <span className="flex items-center gap-0.5 text-sky-400">
+                          <Cloud className="h-3 w-3" />
+                          <span className="text-[10px]">Mega</span>
+                        </span>
+                      </>
+                    )}
+                    {isDone && job.autoArchive && !job.archiveProvider && (
+                      <>
+                        <span className="text-muted-foreground/40">·</span>
+                        <span className="flex items-center gap-0.5 text-amber-400">
+                          <Cloud className="h-3 w-3 animate-pulse" />
+                          <span className="text-[10px]">Archiving…</span>
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
 

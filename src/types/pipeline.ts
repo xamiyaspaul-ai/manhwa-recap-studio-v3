@@ -90,6 +90,7 @@ export interface JobSummary {
   r2Key: string | null;
   archiveProvider: string | null;
   archiveFileId: string | null;
+  autoArchive: boolean;
   error: string | null;
   voice: string;
   chapterLimit: number;

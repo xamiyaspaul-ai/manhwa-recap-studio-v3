@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Film, BookOpen, ImageIcon, CheckCircle2 } from "lucide-react";
+import { Film, BookOpen, ImageIcon, CheckCircle2, Cloud } from "lucide-react";
 
 interface Stats {
   totalJobs: number;
   completedJobs: number;
   totalChapters: number;
   totalImages: number;
+  archivedJobs?: number;
 }
 
 export function StatsBar() {
@@ -30,6 +31,10 @@ export function StatsBar() {
     { icon: CheckCircle2, label: "Chapters Processed", value: stats.totalChapters, color: "text-amber-400" },
     { icon: ImageIcon, label: "Images Scraped", value: stats.totalImages, color: "text-fuchsia-400" },
   ];
+
+  if (stats.archivedJobs && stats.archivedJobs > 0) {
+    items.push({ icon: Cloud, label: "Cloud Archived", value: stats.archivedJobs, color: "text-sky-400" });
+  }
 
   return (
     <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-6 py-4">
