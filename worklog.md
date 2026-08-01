@@ -392,3 +392,109 @@ Stage Summary:
 60. **src/components/pipeline/job-progress.tsx** — No polling fallback if socket disconnects (the `useJobProgress` hook handles this, but `JobProgress` component shows "syncing…" indefinitely if the socket never reconnects). Fix: add a manual "Refresh" button.
 
 Total bugs found: 60 (1 critical, 10 high, 25 medium, 24 low).
+
+---
+Task ID: research-sources
+Agent: Z.ai Code (sub-agent)
+Task: Research additional English manhwa/manga sources that are free, login-free, English-translated, and easily scrapable (HTTP-accessible images). Report URL structure / auth / content type / scraping difficulty for each candidate. Do NOT write any code.
+
+Work Log:
+- Reviewed existing scrapers in /home/z/my-project/src/lib/scrapers.ts: 4 sources already implemented — MangaHere (HTML scraping, zjcdn.mangahere.org CDN), FanFox (same CMS as MangaHere, fmcdn.mfcdn.net CDN), Webtoons (HTML scraping, webtoon-phinf.pstatic.net CDN), AsuraScans (clean JSON REST API at api.asurascans.com). All work without auth.
+- Probed each candidate source via curl from the sandbox, checking DNS, HTTP status, search response, chapter listing, chapter page HTML, and CDN image accessibility (with and without Referer header). All findings below are verified against live responses captured 2026-08-01.
+
+=== CANDIDATES REJECTED (do not implement — sites are dead / hijacked / Cloudflare-walled) ===
+
+1. **MangaKakalot (mangakakalot.com)** — DEAD. Domain has been hijacked: GET https://mangakakalot.com/ returns a 301/302 chain that lands on `spinzywheel.com` (an unrelated "spin the wheel" gambling-style site). The legacy CMS at the old domain is gone. Successor domains (manganato.com, chapmanganato.to, natomanga.com) all sit behind Cloudflare's "Just a moment..." JS challenge — would require a headless browser to scrape. Not viable as a simple-HTTP source.
+
+2. **FlameScans (flamescans.org)** — DEAD / COMPROMISED. GET returns `302 → http://survey-smiles.com` (a known malware/redirect domain) with a JWT-signed cookie challenge (`?ch=1&js=...`). The actual scanlation group appears defunct; the domain is parked behind a JS challenge. Do not scrape — security risk.
+
+3. **ReaperScans (reaperscans.com)** — UNAVAILABLE. GET returns `HTTP 502` from Cloudflare (the upstream is down). Alternate TLDs checked: `reaperscans.com.br` and `reaperscans.net` do not resolve in DNS; `reaperscans.org` is a domain-parking page ("This domain may be for sale"). The ReaperScans group has migrated domains multiple times in the past due to legal pressure; current location unknown. Skip for now.
+
+4. **ManhwaPlus (manhwaplus.com)** — BROKEN TLS. `curl` fails with `SSL certificate problem: EE certificate key too weak` (TLS handshake never completes). The site's cert uses a 1024-bit RSA key, rejected by modern OpenSSL. Even if bypassed with `--insecure`, this signals an unmaintained site. Skip.
+
+5. **ComicK (api.comick.io / api.comick.fun / comick.dev)** — All three API hostnames are inaccessible from the sandbox: `api.comick.fun` does not resolve in DNS, `api.comick.io` returns `301 → comick.dev`, and `comick.dev` is behind Cloudflare with `cf-mitigated: challenge` (requires JS challenge solving). The well-documented ComicK REST API is no longer openly scrapeable. Skip.
+
+6. **MangaFire (mangafire.to)** — Returns HTTP 200 but the search response body is a ~3.1KB SPA shell with no actual results (data is fetched client-side via JS). Without executing the SPA's bundled JS, no search results are returned. The internal ajax API endpoint is not statically discoverable in the HTML. Difficulty: HARD — would require reverse-engineering the SPA's network calls or running a headless browser. Skip.
+
+7. **ManhwaFreak (manhwafreak.com)** — DNS does not resolve. Domain is gone. Skip.
+
+8. **Bato.to (bato.to)** — TCP connection times out (10s) from the sandbox. Either blocked by upstream firewall or DNS/routing issue. Cannot verify structure. (Note: bato.to is widely used by Tachiyomi/Mihon and DOES have an open structure, but could not be verified here, so excluded from recommendations.)
+
+9. **Webtoons / Naver Webtoon (webtoons.com)** — Already implemented. The task asked whether the "official Naver Webtoon" is different from the current webtoons scraper — answer is NO. `https://www.webtoons.com/en/` IS the official Naver Webtoon (the same site, same `webtoon-phinf.pstatic.net` CDN). No separate source needed.
+
+=== RECOMMENDED SOURCES (3 viable — all EASY to scrape, all English, no auth) ===
+
+#### Source A: MangaDex (api.mangadex.org) — EASY · scanlation aggregator · official REST API
+
+- **Type**: Scanlation aggregator with an OFFICIAL public REST API (the gold standard for manga scraping). Community-uploaded translations in 30+ languages, English included.
+- **Auth**: None for reads. Rate-limited (~5 req/s anonymously). No cookies, no tokens, no JS challenge.
+- **Base URL**: `https://api.mangadex.org`
+- **URL structure (3 endpoints)**:
+  1. **Search**: `GET /manga?title={query}&limit=N&availableTranslatedLanguage[]=en` → JSON `{ data: [{ id, attributes: { title, altTitles, description, status, year, contentRating, tags[], availableTranslatedLanguages[] } }] }`. Manga IDs are UUIDs (e.g. `179c52b3-c808-468d-9537-13ebeeb6618f`).
+  2. **Chapter list**: `GET /manga/{mangaId}/feed?translatedLanguage[]=en&order[chapter]=asc&limit=500` → JSON `{ data: [{ id, attributes: { chapter, title, pages, translatedLanguage, externalUrl } }] }`. Chapter IDs are UUIDs. `externalUrl` is set for officially-licensed chapters (MangaDex doesn't host those — points to webnovel/pocketcomics/tappytoon); filter them out (treat `externalUrl != null` as unavailable).
+  3. **Page images**: `GET /at-home/server/{chapterId}` → JSON `{ baseUrl, chapter: { hash, data[], dataSaver[] } }`. Construct image URLs as:
+     - Full quality: `{baseUrl}/data/{hash}/{filename}`
+     - Compressed (data-saver): `{baseUrl}/data-saver/{hash}/{filename}`
+     - Example: `https://cmdxd98sb0x3yprd.mangadex.network/data/35a103224c004f4862ed4740dcbb727e/1-2c7f1ecf764fabe868936694c64c52221579a692d41215db886ede6b4411e282.jpg`
+  4. **Cover art** (optional metadata): `GET /cover?manga[]={mangaId}` → returns `{ fileName, volume, locale }`. Cover URL: `https://uploads.mangadex.org/covers/{mangaId}/{fileName}` (append `.512.jpg` for 512px thumbnail).
+- **CDN auth**: Image fetches from `*.mangadex.network` REQUIRE `Referer: https://mangadex.org/` header — without it, returns 404 (verified live). With Referer, returns `200 image/jpeg` ~430KB.
+- **Caveat**: Many popular LICENSED manhwa (Solo Leveling, Tower of God, Nano Machine) have been DMCA'd on MangaDex — search returns the manga but the feed returns `externalUrl`-only chapters (or `total: 0`). Best for non-licensed / fan-translated manhwa (e.g. "Return of the Blossoming Blade" returns 7 hosted English chapters with full image lists). Pair with the existing AsuraScans source for licensed titles.
+- **Difficulty**: EASY. The cleanest of all sources — official JSON API, no HTML parsing, no CDN auth beyond a Referer header.
+
+#### Source B: MangaPill (mangapill.com) — EASY · scanlation aggregator · HTML scraping with PREDICTABLE image URLs
+
+- **Type**: Scanlation aggregator. English-translated manga + manhwa. Static HTML pages (Laravel backend based on response headers).
+- **Auth**: None. No cookies, no JS challenge. Standard `User-Agent` header is sufficient.
+- **Base URL**: `https://mangapill.com`
+- **CDN**: `https://cdn.readdetectiveconan.com` (oddly named shared CDN, backed by Backblaze B2 behind Cloudflare — confirmed by `x-bz-file-name` / `x-bz-file-id` response headers).
+- **URL structure (3 endpoints)**:
+  1. **Search**: `GET /search?q={query}` → HTML. Manga links follow `/manga/{id}/{slug}` pattern (e.g. `/manga/2122/solo-leveling`, `/manga/8136/solo-leveling-novel`). ID is a numeric int.
+  2. **Chapter list**: `GET /manga/{id}/{slug}` → HTML. Chapter links follow `/chapters/{id}-{paddedChapterId}/{slug}-chapter-{N}` pattern. The `paddedChapterId` is encoded as `1000000 + N*1000` (chapter 1 → `10001000`, chapter 2 → `10002000`, chapter 3 → `10003000`, etc.). This encoding is fully deterministic from the chapter number — no need to parse the chapter list HTML to construct image URLs (though you do need it to enumerate available chapter numbers).
+  3. **Page images**: Predictable URL pattern — `https://cdn.readdetectiveconan.com/file/mangap/{mangaId}/{paddedChapterId}/{N}.jpg` where `N` is 1, 2, 3, ... up to the chapter's page count. To discover the page count, fetch the chapter page HTML once and parse all `<img data-src="...">` attributes (lazy-loaded — must read `data-src`, not `src`). Images are sequential integers, no hash suffix.
+- **CDN auth**: REQUIRES `Referer: https://mangapill.com/` header — without it returns `403` (Cloudflare hotlink protection). With Referer, returns `200 image/jpeg` (verified, ~209KB sample).
+- **Difficulty**: EASY. Cleanest image URL pattern of any HTML-scraping source — fully predictable from `{mangaId, chapterNumber, pageNumber}` alone. One fetch of the chapter page is needed only to enumerate page count.
+
+#### Source C: Toonily (toonily.com) — EASY/MEDIUM · scanlation aggregator · WordPress + WP Manga plugin
+
+- **Type**: Scanlation aggregator focused on manhwa (Korean webtoons). English translations. WordPress + Madara/WP-Manga theme.
+- **Auth**: None. No cookies, no JS challenge. Cloudflare-protected but the standard `User-Agent` header is sufficient.
+- **Base URL**: `https://toonily.com`
+- **CDN**: `https://data.tnlycdn.com` (chapter pages) and `https://static.tnlycdn.com` (covers / static assets).
+- **URL structure (3 endpoints)**:
+  1. **Search**: `GET /?s={query}` (standard WordPress search) → HTML. Series links follow `/serie/{slug}/` pattern. The slug includes a hash suffix, e.g. `solo-leveling-ragnarok-11e48173` (the `11e48173` is a per-series 8-hex-char identifier).
+  2. **Chapter list**: `GET /serie/{slug}/` → HTML. Chapter links follow `/serie/{slug}/chapter-{N}/` pattern. N is a positive integer (1, 2, 3, ... up to current chapter). Listed in reverse-chronological order (newest first) on the series page.
+  3. **Page images**: NOT predictable from URL alone — must fetch the chapter page (`GET /serie/{slug}/chapter-{N}/`) and parse `<div class="page-break no-gaps">` containers, each containing an `<img>` with `data-src="https://data.tnlycdn.com/chapters/{mangaHash}/{chapterHash}/{NN}[_{slug}].{ext}">`. The `mangaHash` is `manga_{24-hex-chars}` (e.g. `manga_66bd2f56eba00`) and `chapterHash` is a 32-hex-char MD5 (e.g. `38fffb5149b9207044ed55cf19abd726`). Filenames vary: `01.png`, `02-(1).jpg`, `000_slr.jpg` (cover/credit pages) — so URL discovery must be done by scraping the chapter HTML, not constructed.
+- **CDN auth**: REQUIRES `Referer: https://toonily.com/` header — without it returns `403`. With Referer, returns `200 image/jpeg` (verified, ~865KB sample) with `cache-control: public, max-age=31536000, immutable` (CDN is well-cached, good for re-reads).
+- **Difficulty**: EASY-MEDIUM. WordPress Madara theme is well-understood (same CMS used by dozens of scanlation sites, so the scraper pattern is reusable). One extra HTTP fetch per chapter is needed to discover image URLs (cannot be constructed deterministically like MangaPill).
+
+=== SUMMARY TABLE ===
+
+| Source | Type | Auth | English | Difficulty | Implement? |
+|---|---|---|---|---|---|
+| MangaDex (api.mangadex.org) | Scanlation aggregator (official API) | None | Yes (30+ langs) | EASY | YES — top priority |
+| MangaPill (mangapill.com) | Scanlation aggregator | None | Yes | EASY (best URL pattern) | YES |
+| Toonily (toonily.com) | Scanlation aggregator (WP+Madara) | None | Yes (manhwa focus) | EASY-MEDIUM | YES |
+| MangaKakalot | DEAD (domain hijacked to spinzywheel.com) | — | — | — | NO |
+| Manganato / chapmanganato / natomanga | Cloudflare JS challenge | — | — | HARD | NO |
+| FlameScans | DEAD (redirects to survey-smiles.com malware) | — | — | — | NO |
+| ReaperScans | 502 / domain parked | — | — | — | NO |
+| ManhwaPlus | TLS cert too weak | — | — | — | NO |
+| ComicK (api.comick.io/.fun/.dev) | DNS dead / Cloudflare challenge | — | — | HARD | NO |
+| MangaFire | SPA shell only (no SSR results) | — | — | HARD | NO |
+| ManhwaFreak | DNS does not resolve | — | — | — | NO |
+| Bato.to | TCP timeout from sandbox (unverified) | — | — | — | NO |
+| Webtoons (webtoons.com) | Already implemented | — | Yes (official) | — | N/A |
+
+=== NEXT ACTIONS (suggested, not implemented) ===
+
+1. Implement MangaDex scraper first (highest value — official API, JSON responses, no HTML parsing, rich metadata: covers, descriptions, tags, status, year, content rating). Use `md-` prefix for IDs. Filter out `externalUrl`-only chapters. Add `Referer: https://mangadex.org/` to image fetches. Approximate implementation: 3 small functions (~120 LOC) — searchMangaDex, getMangaDexChapters, getMangaDexImages — modeled on the existing AsuraScans JSON scraper.
+2. Implement MangaPill scraper second (best HTML-scraping target — image URLs fully predictable from `{mangaId, chapterN, pageN}`). Use `mp-` prefix. One fetch of the chapter page to enumerate page count, then construct image URLs deterministically. Add `Referer: https://mangapill.com/` to image fetches.
+3. Implement Toonily scraper third (covers the manhwa-specific gap — MangaDex/Pill skew toward Japanese manga). Use `tn-` prefix. WordPress Madara pattern is reusable — once written, the same scraper code can be adapted for any Madara-theme scanlation site by changing the base URL.
+4. Extend `ScraperSource` union type, `getSourceFromId`, `getSlugFromId`, `getChaptersForSource`, `getImagesForSource` in scrapers.ts to dispatch the three new sources. Add new entries to the `baseUrls` map in src/app/api/manga/[id]/route.ts (currently flagged as bug #15 in the worklog).
+5. Consider adding a periodic health-check that pings each source's homepage once an hour and records status — sites like ReaperScans and FlameScans have shown that scanlation aggregators can disappear or hijack overnight.
+
+Stage Summary:
+- 8 candidate sources probed live from the sandbox; 3 are viable (MangaDex, MangaPill, Toonily) and 8 are rejected (dead/hijacked/Cloudflare-walled/TLS-broken/DNS-dead).
+- All 3 recommended sources verified end-to-end: search → chapter list → chapter page → image fetch with Referer header → 200 OK image bytes on disk.
+- MangaDex is the strongest pick (official REST API, no HTML parsing, richest metadata) and should be implemented first. MangaPill is the strongest HTML-scraping pick (deterministic image URLs). Toonily fills the manhwa-specific gap.
+- No code was written per the task constraint. Findings appended to /home/z/my-project/worklog.md.

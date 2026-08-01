@@ -573,6 +573,141 @@ export async function getAsuraScansImages(
 }
 
 // ---------------------------------------------------------------------------
+// SEARCH: MangaDex, MangaPill, Toonily
+// ---------------------------------------------------------------------------
+
+export async function searchMangaDex(
+  query: string,
+  limit = 10
+): Promise<MangadexManga[]> {
+  const url = `https://api.mangadex.org/manga?title=${encodeURIComponent(query)}&limit=${limit}&includes[]=cover_art&contentRating[]=safe&contentRating[]=suggestive&order[relevance]=desc`;
+  const res = await fetchWithTimeout(url, {}, 15000);
+  if (!res.ok) throw new Error(`MangaDex search ${res.status}`);
+  const data = await res.json() as {
+    data: Array<{
+      id: string;
+      attributes: {
+        title?: Record<string, string>;
+        description?: Record<string, string>;
+        year?: number | null;
+        status?: string;
+        originalLanguage?: string;
+        contentRating?: string;
+        tags?: Array<{ attributes: { name?: Record<string, string> } }>;
+      };
+      relationships?: Array<{ type: string; attributes?: { fileName?: string } }>;
+    }>;
+  };
+
+  return data.data.map((m) => {
+    const title = m.attributes.title?.en || Object.values(m.attributes.title || {})[0] || m.id;
+    const coverRel = m.relationships?.find((r) => r.type === "cover_art");
+    const coverUrl = coverRel?.attributes?.fileName
+      ? `https://uploads.mangadex.org/covers/${m.id}/${coverRel.attributes.fileName}.256.jpg`
+      : null;
+    const desc = m.attributes.description?.en || "";
+    return {
+      id: `md-${m.id}`,
+      title,
+      description: desc,
+      coverUrl,
+      status: m.attributes.status
+        ? m.attributes.status.charAt(0).toUpperCase() + m.attributes.status.slice(1)
+        : null,
+      year: m.attributes.year ?? null,
+      originalLanguage: m.attributes.originalLanguage ?? null,
+      availableTranslatedLanguages: ["en"],
+      tags: (m.attributes.tags || [])
+        .map((t) => t.attributes?.name?.en)
+        .filter(Boolean) as string[],
+      contentRating: (m.attributes.contentRating || "safe") as "safe" | "suggestive" | "erotica",
+      lastChapter: null,
+      source: "mangadex" as const,
+      externalUrl: `https://mangadex.org/title/${m.id}`,
+    };
+  });
+}
+
+export async function searchMangaPill(
+  query: string,
+  limit = 10
+): Promise<MangadexManga[]> {
+  const url = `https://mangapill.com/search?q=${encodeURIComponent(query)}`;
+  const res = await fetchWithTimeout(url, {
+    headers: { "User-Agent": "Mozilla/5.0", Referer: "https://mangapill.com/" },
+  }, 15000);
+  if (!res.ok) throw new Error(`MangaPill search ${res.status}`);
+  const html = await res.text();
+
+  const results: MangadexManga[] = [];
+  // MangaPill search results: <a href="/manga/{id}-{slug}" class="...">
+  const regex = /href="\/manga\/([^"]+)"[^>]*>[\s\S]*?<h3[^>]*>([^<]+)<\/h3>[\s\S]*?(?:src="([^"]+)")?/g;
+  let match;
+  while ((match = regex.exec(html)) !== null && results.length < limit) {
+    const slug = match[1];
+    const title = match[2].trim();
+    const cover = match[3] || null;
+    results.push({
+      id: `mp-${slug}`,
+      title,
+      description: "",
+      coverUrl: cover,
+      status: null,
+      year: null,
+      originalLanguage: null,
+      availableTranslatedLanguages: ["en"],
+      tags: [],
+      contentRating: "safe",
+      lastChapter: null,
+      source: "mangapill" as const,
+      externalUrl: `https://mangapill.com/manga/${slug}`,
+    });
+  }
+
+  return results;
+}
+
+export async function searchToonily(
+  query: string,
+  limit = 10
+): Promise<MangadexManga[]> {
+  const url = `https://toonily.com/?s=${encodeURIComponent(query)}&post_type=wp-manga`;
+  const res = await fetchWithTimeout(url, {
+    headers: { "User-Agent": "Mozilla/5.0", Referer: "https://toonily.com/" },
+  }, 15000);
+  if (!res.ok) throw new Error(`Toonily search ${res.status}`);
+  const html = await res.text();
+
+  const results: MangadexManga[] = [];
+  // Madara theme: results are <div class="row c-tabs-item__content"> with
+  // <a href="https://toonily.com/serie/{slug}/"> and <img src="{cover}">
+  const regex = /href="https:\/\/toonily\.com\/serie\/([^/]+)\/?"[^>]*>[\s\S]*?(?:src="([^"]+)")?[\s\S]*?<h3[^>]*>\s*<a[^>]*>([^<]+)<\/a>/g;
+  let match;
+  while ((match = regex.exec(html)) !== null && results.length < limit) {
+    const slug = match[1];
+    const cover = match[2] || null;
+    const title = match[3].trim();
+    results.push({
+      id: `tl-${slug}`,
+      title,
+      description: "",
+      coverUrl: cover,
+      status: null,
+      year: null,
+      originalLanguage: "ko", // Toonily is manhwa-focused
+      availableTranslatedLanguages: ["en"],
+      tags: [],
+      contentRating: "safe",
+      lastChapter: null,
+      source: "toonily" as const,
+      externalUrl: `https://toonily.com/serie/${slug}/`,
+    });
+  }
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // Unified dispatcher: given a manga ID, determine the source and delegate.
 // ---------------------------------------------------------------------------
 
@@ -580,18 +715,24 @@ export type ScraperSource =
   | "mangahere"
   | "fanfox"
   | "webtoons"
-  | "asurascans";
+  | "asurascans"
+  | "mangadex"
+  | "mangapill"
+  | "toonily";
 
 export function getSourceFromId(id: string): ScraperSource | null {
   if (id.startsWith("mh-")) return "mangahere";
   if (id.startsWith("ff-")) return "fanfox";
   if (id.startsWith("wt-")) return "webtoons";
   if (id.startsWith("as-")) return "asurascans";
+  if (id.startsWith("md-")) return "mangadex";
+  if (id.startsWith("mp-")) return "mangapill";
+  if (id.startsWith("tl-")) return "toonily";
   return null;
 }
 
 export function getSlugFromId(id: string): string {
-  return id.replace(/^(mh-|ff-|wt-|as-)/, "");
+  return id.replace(/^(mh-|ff-|wt-|as-|md-|mp-|tl-)/, "");
 }
 
 export async function getChaptersForSource(
@@ -607,6 +748,12 @@ export async function getChaptersForSource(
       return getWebtoonsChapters(parseInt(slug, 10));
     case "asurascans":
       return getAsuraScansChapters(slug);
+    case "mangadex":
+      return getMangaDexChapters(slug);
+    case "mangapill":
+      return getMangaPillChapters(slug);
+    case "toonily":
+      return getToonilyChapters(slug);
   }
 }
 
@@ -624,5 +771,252 @@ export async function getImagesForSource(
       return getWebtoonsImages(parseInt(slug, 10), parseInt(chapterId.replace(/^ep-/, ""), 10));
     case "asurascans":
       return getAsuraScansImages(slug, chapterId);
+    case "mangadex":
+      return getMangaDexImages(slug, chapterId);
+    case "mangapill":
+      return getMangaPillImages(slug, chapterId);
+    case "toonily":
+      return getToonilyImages(slug, chapterId);
   }
+}
+
+// ---------------------------------------------------------------------------
+// 5. MANGADEX — official REST API, pure JSON, no HTML parsing needed.
+// Source: api.mangadex.org — the gold standard for manga APIs.
+// Has English-translated content from scanlation groups.
+// ---------------------------------------------------------------------------
+
+export async function getMangaDexChapters(mangaId: string): Promise<ScrapedChapter[]> {
+  // Fetch all chapters for this manga (English translated, sorted ascending)
+  const url = `https://api.mangadex.org/manga/${mangaId}/feed?translatedLanguage[]=en&order[chapter]=asc&limit=500&contentRating[]=safe&contentRating[]=suggestive`;
+  const res = await fetchWithTimeout(url, {}, 15000);
+  if (!res.ok) throw new Error(`MangaDex chapters ${res.status}`);
+
+  const data = await res.json() as {
+    data: Array<{
+      id: string;
+      attributes: {
+        chapter?: string;
+        title?: string | null;
+        translatedLanguage?: string;
+        externalUrl?: string | null;
+        pages?: number;
+      };
+    }>;
+  };
+
+  const chapters: ScrapedChapter[] = [];
+  for (const ch of data.data) {
+    // Skip chapters that only have external URLs (DMCA'd/licensed)
+    if (ch.attributes.externalUrl) continue;
+    chapters.push({
+      id: ch.id,
+      chapterNum: ch.attributes.chapter ?? String(chapters.length + 1),
+      title: ch.attributes.title ?? null,
+      language: ch.attributes.translatedLanguage ?? "en",
+    });
+  }
+
+  if (chapters.length === 0) {
+    throw new Error("No readable chapters (all are external/licensed). Try a different source.");
+  }
+
+  return chapters;
+}
+
+export async function getMangaDexImages(
+  _slug: string,
+  chapterId: string
+): Promise<ScrapedImage[]> {
+  // MangaDex at-home server API: returns baseUrl + file list
+  const url = `https://api.mangadex.org/at-home/server/${chapterId}`;
+  const res = await fetchWithTimeout(url, {}, 15000);
+  if (!res.ok) throw new Error(`MangaDex images ${res.status}`);
+
+  const data = await res.json() as {
+    baseUrl: string;
+    chapter: {
+      hash: string;
+      data: string[];
+    };
+  };
+
+  const images: ScrapedImage[] = [];
+  for (const file of data.chapter.data) {
+    const imgUrl = `${data.baseUrl}/data/${data.chapter.hash}/${file}`;
+    images.push({
+      url: imgUrl,
+      filename: file,
+      // MangaDex CDN requires Referer header
+      headers: { Referer: "https://mangadex.org/" },
+    });
+  }
+
+  if (images.length === 0) {
+    throw new Error("MangaDex returned no images for this chapter");
+  }
+
+  return images;
+}
+
+// ---------------------------------------------------------------------------
+// 6. MANGAPILL — scanlation aggregator, predictable image URLs.
+// Source: mangapill.com — English manga/manhwa with CDN-hosted images.
+// Image URLs are deterministic: cdn.readdetectiveconan.com/file/mangap/{id}/{offset}/{page}.jpg
+// ---------------------------------------------------------------------------
+
+export async function getMangaPillChapters(slug: string): Promise<ScrapedChapter[]> {
+  const url = `https://mangapill.com/manga/${slug}`;
+  const res = await fetchWithTimeout(url, {
+    headers: { "User-Agent": "Mozilla/5.0", Referer: "https://mangapill.com/" },
+  }, 15000);
+  if (!res.ok) throw new Error(`MangaPill chapters ${res.status}`);
+
+  const html = await res.text();
+  const chapters: ScrapedChapter[] = [];
+
+  // Parse chapter links from HTML
+  const chapterRegex = /href="\/chapters\/[^"]*"/g;
+  const matches = html.match(chapterRegex) || [];
+
+  for (const match of matches) {
+    const href = match.replace(/href="|"/g, "");
+    const chapterId = href.split("/").pop() || "";
+    // Extract chapter number from URL like /chapters/123-45678-chapter-5
+    const numMatch = chapterId.match(/chapter-(\d+(?:\.\d+)?)/);
+    const chapterNum = numMatch ? numMatch[1] : String(chapters.length + 1);
+    chapters.push({
+      id: chapterId,
+      chapterNum,
+      title: null,
+      language: "en",
+    });
+  }
+
+  if (chapters.length === 0) {
+    throw new Error("MangaPill returned no chapters");
+  }
+
+  return chapters;
+}
+
+export async function getMangaPillImages(
+  slug: string,
+  chapterId: string
+): Promise<ScrapedImage[]> {
+  const url = `https://mangapill.com/chapters/${chapterId}`;
+  const res = await fetchWithTimeout(url, {
+    headers: { "User-Agent": "Mozilla/5.0", Referer: "https://mangapill.com/" },
+  }, 15000);
+  if (!res.ok) throw new Error(`MangaPill images ${res.status}`);
+
+  const html = await res.text();
+  const images: ScrapedImage[] = [];
+
+  // MangaPill uses data-src or src on img tags with cdn.readdetectiveconan.com
+  const imgRegex = /(?:data-src|src)="(https:\/\/cdn\.readdetectiveconan\.com\/file\/mangap\/[^"]+)"/g;
+  let match;
+  let page = 1;
+  while ((match = imgRegex.exec(html)) !== null) {
+    images.push({
+      url: match[1],
+      filename: `${String(page).padStart(3, "0")}.jpg`,
+      headers: { Referer: "https://mangapill.com/" },
+    });
+    page++;
+  }
+
+  if (images.length === 0) {
+    throw new Error("MangaPill returned no images for this chapter");
+  }
+
+  return images;
+}
+
+// ---------------------------------------------------------------------------
+// 7. TOONILY — manhwa-focused scanlation aggregator (WordPress Madara theme).
+// Source: toonily.com — lots of English manhwa, Madara theme pattern.
+// The Madara scraper pattern is reusable for dozens of sister sites.
+// ---------------------------------------------------------------------------
+
+export async function getToonilyChapters(slug: string): Promise<ScrapedChapter[]> {
+  const url = `https://toonily.com/serie/${slug}/`;
+  const res = await fetchWithTimeout(url, {
+    headers: { "User-Agent": "Mozilla/5.0", Referer: "https://toonily.com/" },
+  }, 15000);
+  if (!res.ok) throw new Error(`Toonily chapters ${res.status}`);
+
+  const html = await res.text();
+  const chapters: ScrapedChapter[] = [];
+
+  // Madara theme: chapters are in <li> with <a href="...chapter-N/">
+  const chapterRegex = /href="(https:\/\/toonily\.com\/[^"]+\/chapter-(\d+(?:\.\d+)?)\/?)"/g;
+  const seen = new Set<string>();
+  let match;
+  while ((match = chapterRegex.exec(html)) !== null) {
+    const chapterUrl = match[1];
+    const chapterNum = match[2];
+    if (seen.has(chapterNum)) continue;
+    seen.add(chapterNum);
+    // Extract chapter ID from URL
+    const idMatch = chapterUrl.match(/\/([^/]+)\/chapter-/);
+    const chapterId = idMatch ? `${idMatch[1]}-ch-${chapterNum}` : chapterNum;
+    chapters.push({
+      id: chapterId,
+      chapterNum,
+      title: null,
+      language: "en",
+    });
+  }
+
+  if (chapters.length === 0) {
+    throw new Error("Toonily returned no chapters");
+  }
+
+  // Sort by chapter number (ascending)
+  chapters.sort((a, b) => parseFloat(a.chapterNum) - parseFloat(b.chapterNum));
+
+  return chapters;
+}
+
+export async function getToonilyImages(
+  slug: string,
+  chapterId: string
+): Promise<ScrapedImage[]> {
+  // chapterId format: {slug}-ch-{num}
+  const numMatch = chapterId.match(/ch-(\d+(?:\.\d+)?)/);
+  if (!numMatch) throw new Error(`Invalid Toonily chapter ID: ${chapterId}`);
+  const chapterNum = numMatch[1];
+
+  const url = `https://toonily.com/serie/${slug}/chapter-${chapterNum}/`;
+  const res = await fetchWithTimeout(url, {
+    headers: { "User-Agent": "Mozilla/5.0", Referer: "https://toonily.com/" },
+  }, 15000);
+  if (!res.ok) throw new Error(`Toonily images ${res.status}`);
+
+  const html = await res.text();
+  const images: ScrapedImage[] = [];
+
+  // Madara theme: images are in <div class="reading-content"> with <img data-src="...">
+  const imgRegex = /data-src="(https:\/\/[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/gi;
+  let match;
+  let page = 1;
+  while ((match = imgRegex.exec(html)) !== null) {
+    const imgUrl = match[1].trim();
+    // Skip non-content images (logos, icons)
+    if (imgUrl.includes("logo") || imgUrl.includes("icon") || imgUrl.includes("avatar")) continue;
+    const ext = imgUrl.match(/\.(jpg|jpeg|png|webp)/i)?.[1] || "jpg";
+    images.push({
+      url: imgUrl,
+      filename: `${String(page).padStart(3, "0")}.${ext}`,
+      headers: { Referer: "https://toonily.com/" },
+    });
+    page++;
+  }
+
+  if (images.length === 0) {
+    throw new Error("Toonily returned no images for this chapter");
+  }
+
+  return images;
 }
