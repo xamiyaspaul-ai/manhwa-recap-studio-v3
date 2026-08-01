@@ -170,23 +170,58 @@ export function VideoResult({ job }: VideoResultProps) {
         )}
       </div>
 
-      {/* YouTube-ready section */}
-      <div className="p-4 rounded-lg border border-red-500/20 bg-red-500/5 space-y-2">
-        <div className="flex items-center gap-2">
-          <Youtube className="h-4 w-4 text-red-500" />
-          <span className="text-sm font-medium">YouTube-Ready</span>
+      {/* YouTube-ready section — SEO optimized */}
+      <div className="p-4 rounded-lg border border-red-500/20 bg-red-500/5 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Youtube className="h-4 w-4 text-red-500" />
+            <span className="text-sm font-medium">YouTube-Ready (SEO Optimized)</span>
+          </div>
+          <button
+            onClick={() => {
+              fetch(`/api/jobs/${job.id}/youtube-metadata`)
+                .then(r => r.json())
+                .then(data => {
+                  if (data.metadata) {
+                    navigator.clipboard.writeText(
+                      `Title: ${data.metadata.title}\n\nDescription:\n${data.metadata.description}\n\nTags: ${data.metadata.tags.join(", ")}`
+                    );
+                    toast({ title: "Copied!", description: "YouTube metadata copied to clipboard" });
+                  }
+                })
+                .catch(() => toast({ title: "Not ready yet", description: "YouTube metadata generates after render completes", variant: "destructive" }));
+            }}
+            className="text-xs px-2 py-1 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 transition border border-red-500/20"
+          >
+            Copy Metadata
+          </button>
         </div>
-        <p className="text-xs text-muted-foreground">
-          A YouTube-optimized version is generated automatically with each video:
-        </p>
+
+        {/* Feature badges */}
         <div className="flex flex-wrap gap-2 text-xs">
           <span className="px-2 py-1 rounded bg-card/50 border border-border">🎬 H.264 1080p + faststart</span>
-          <span className="px-2 py-1 rounded bg-card/50 border border-border">🖼️ 1280x720 thumbnail</span>
-          <span className="px-2 py-1 rounded bg-card/50 border border-border">📝 Title + description + tags</span>
+          <span className="px-2 py-1 rounded bg-card/50 border border-border">🖼️ High-CTR thumbnail</span>
+          <span className="px-2 py-1 rounded bg-card/50 border border-border">📝 SEO title + description</span>
+          <span className="px-2 py-1 rounded bg-card/50 border border-border">🏷️ 15+ optimized tags</span>
+          <span className="px-2 py-1 rounded bg-card/50 border border-border">⏱️ Auto timestamps</span>
         </div>
+
+        {/* SEO tips */}
+        <div className="text-[11px] text-muted-foreground space-y-1">
+          <p className="font-medium text-foreground/70">📈 Algorithm tips for max views:</p>
+          <ul className="ml-4 space-y-0.5 text-muted-foreground">
+            <li>• Upload <code>youtube_ready.mp4</code> (optimized encoding survives YT compression)</li>
+            <li>• Set <code>thumbnail.jpg</code> as custom thumbnail (high-contrast, bold text)</li>
+            <li>• Copy title + description from <code>youtube_metadata.json</code> (keywords front-loaded)</li>
+            <li>• Add all tags — they help discovery in YouTube search</li>
+            <li>• Publish as <strong>private</strong> first, check everything, then make public</li>
+            <li>• First 15 seconds matter most for watch time — the thumbnail + title set expectations</li>
+          </ul>
+        </div>
+
         <p className="text-[10px] text-muted-foreground">
-          Files are in the job's <code className="text-muted-foreground">output/youtube/</code> directory.
-          Upload the MP4 + thumbnail to YouTube Studio, then paste the metadata from <code className="text-muted-foreground">youtube_metadata.json</code>.
+          Files in <code className="text-muted-foreground">output/youtube/</code> directory.
+          All generated with free tools (ffmpeg + PIL).
         </p>
       </div>
 
