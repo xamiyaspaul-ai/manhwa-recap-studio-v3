@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Download, Film, CheckCircle2, Share2, Image as ImageIcon, BookOpen, Clock, Cloud, CloudUpload, Loader2, HardDrive, Youtube } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,71 @@ export function VideoResult({ job }: VideoResultProps) {
   const [archiveProvider, setArchiveProvider] = useState<string | null>(
     job.archiveProvider ?? null
   );
+  const [ytMetadata, setYtMetadata] = useState<{
+    title: string;
+    description: string;
+    tags: string[];
+    hashtags: string[];
+  } | null>(null);
+  const [ytLoading, setYtLoading] = useState(false);
+
+  // Fetch YouTube metadata when the video result loads
+  useEffect(() => {
+    fetch(`/api/jobs/${job.id}/youtube-metadata`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.metadata) {
+          setYtMetadata(data.metadata);
+        }
+      })
+      .catch(() => {});
+  }, [job.id]);
+
+  const handleCopyMetadata = async () => {
+    if (!ytMetadata) {
+      setYtLoading(true);
+      try {
+        const res = await fetch(`/api/jobs/${job.id}/youtube-metadata`);
+        const data = await res.json();
+        if (data?.metadata) {
+          setYtMetadata(data.metadata);
+        } else {
+          throw new Error(data?.error || "Not generated yet");
+        }
+      } catch (e) {
+        toast({
+          title: "Metadata not available",
+          description: e instanceof Error ? e.message : "YouTube metadata hasn't been generated yet",
+          variant: "destructive",
+        });
+        setYtLoading(false);
+        return;
+      }
+      setYtLoading(false);
+    }
+
+    const text = `TITLE:\n${ytMetadata?.title || ""}\n\nDESCRIPTION:\n${ytMetadata?.description || ""}\n\nTAGS:\n${(ytMetadata?.tags || []).join(", ")}\n\nHASHTAGS:\n${(ytMetadata?.hashtags || []).join(" ")}`;
+
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ title: "Copied!", description: "YouTube metadata copied to clipboard" });
+    } catch {
+      // Fallback: create a textarea and select it
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand("copy");
+        toast({ title: "Copied!", description: "YouTube metadata copied to clipboard" });
+      } catch {
+        toast({ title: "Copy failed", description: "Please copy manually from the metadata file", variant: "destructive" });
+      }
+      document.body.removeChild(textarea);
+    }
+  };
 
   const handleShare = async () => {
     const url = `${window.location.origin}/api/download/${job.id}`;
@@ -178,22 +243,11 @@ export function VideoResult({ job }: VideoResultProps) {
             <span className="text-sm font-medium">YouTube-Ready (SEO Optimized)</span>
           </div>
           <button
-            onClick={() => {
-              fetch(`/api/jobs/${job.id}/youtube-metadata`)
-                .then(r => r.json())
-                .then(data => {
-                  if (data.metadata) {
-                    navigator.clipboard.writeText(
-                      `Title: ${data.metadata.title}\n\nDescription:\n${data.metadata.description}\n\nTags: ${data.metadata.tags.join(", ")}`
-                    );
-                    toast({ title: "Copied!", description: "YouTube metadata copied to clipboard" });
-                  }
-                })
-                .catch(() => toast({ title: "Not ready yet", description: "YouTube metadata generates after render completes", variant: "destructive" }));
-            }}
-            className="text-xs px-2 py-1 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 transition border border-red-500/20"
+            onClick={handleCopyMetadata}
+            disabled={ytLoading}
+            className="text-xs px-2 py-1 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 transition border border-red-500/20 disabled:opacity-50"
           >
-            Copy Metadata
+            {ytLoading ? "Loading..." : ytMetadata ? "Copy Metadata ✓" : "Copy Metadata"}
           </button>
         </div>
 
@@ -205,6 +259,16 @@ export function VideoResult({ job }: VideoResultProps) {
           <span className="px-2 py-1 rounded bg-card/50 border border-border">🏷️ 15+ optimized tags</span>
           <span className="px-2 py-1 rounded bg-card/50 border border-border">⏱️ Auto timestamps</span>
         </div>
+
+        {/* Metadata preview (when loaded) */}
+        {ytMetadata && (
+          <div className="p-3 rounded-lg bg-card/50 border border-border space-y-1 text-xs">
+            <p className="font-medium text-foreground">Title:</p>
+            <p className="text-muted-foreground">{ytMetadata.title}</p>
+            <p className="font-medium text-foreground mt-2">Tags ({ytMetadata.tags?.length || 0}):</p>
+            <p className="text-muted-foreground text-[11px]">{(ytMetadata.tags || []).join(", ")}</p>
+          </div>
+        )}
 
         {/* SEO tips */}
         <div className="text-[11px] text-muted-foreground space-y-1">
