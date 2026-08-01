@@ -57,6 +57,13 @@ model Job {
   geminiKey   String?   // per-job Google Gemini API key (for VLM)
   openRouterKey String? // per-job OpenRouter API key (for VLM)
   openaiKey   String?   // per-job OpenAI api key (optional)
+  megaEmail     String? // per-job Mega email (cloud archive)
+  megaPassword  String? // per-job Mega password (cloud archive)
+  r2AccountId   String? // per-job Cloudflare R2 account ID
+  r2AccessKeyId String? // per-job R2 access key ID
+  r2SecretAccessKey String? // per-job R2 secret key
+  r2Bucket      String? // per-job R2 bucket name
+  autoArchive   Boolean  @default(false) // auto-upload to cloud after render
   voice       String    @default("en-US-AndrewNeural")
   chapterLimit Int      @default(0) // 0 = all chapters
   translate   Boolean   @default(true)

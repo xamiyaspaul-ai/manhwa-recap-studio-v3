@@ -1190,15 +1190,19 @@ async function processJob(jobId: string): Promise<void> {
     // Only runs if R2 didn't already handle the file (i.e. local file still
     // exists). Uploads to Mega, stores the share URL (with decryption key) in
     // the DB, then deletes the local file to free disk space.
-    // Controlled by AUTO_ARCHIVE env (default: "true"). Set to "false" to keep
-    // videos local.
+    // Uses per-job Mega creds if provided (from the UI), else falls back to
+    // .env MEGA_EMAIL/MEGA_PASSWORD.
     // -----------------------------
     let archiveProvider: string | null = null
     let archiveFileId: string | null = null
-    const autoArchive = process.env.AUTO_ARCHIVE !== 'false'
+    // Per-job autoArchive flag takes priority; fallback to env AUTO_ARCHIVE
+    const autoArchive = job.autoArchive === true || (job.autoArchive === null && process.env.AUTO_ARCHIVE !== 'false')
+    // Per-job Mega creds take priority; fallback to env
+    const megaEmail = job.megaEmail || process.env.MEGA_EMAIL
+    const megaPassword = job.megaPassword || process.env.MEGA_PASSWORD
     if (autoArchive && r2Key === null) {
       const localExists = await fileExists(outFile)
-      const megaOk = !!process.env.MEGA_EMAIL && !!process.env.MEGA_PASSWORD
+      const megaOk = !!megaEmail && !!megaPassword
 
       if (localExists && megaOk) {
         await emitLog(jobId, 'info', 'done', 'Archiving video to Mega…')
@@ -1208,8 +1212,8 @@ async function processJob(jobId: string): Promise<void> {
 
           await new Promise<void>((resolve, reject) => {
             const s = mega.Storage({
-              email: process.env.MEGA_EMAIL,
-              password: process.env.MEGA_PASSWORD,
+              email: megaEmail,
+              password: megaPassword,
               autoload: true,
             })
             s.on('ready', () => {

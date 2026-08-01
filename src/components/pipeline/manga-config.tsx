@@ -14,6 +14,7 @@ import {
   Clock,
   Volume2,
   Pause,
+  CloudUpload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -122,6 +123,9 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
   const [groqKey, setGroqKey] = useState("");
   const [geminiKey, setGeminiKey] = useState("");
   const [openRouterKey, setOpenRouterKey] = useState("");
+  const [megaEmail, setMegaEmail] = useState("");
+  const [megaPassword, setMegaPassword] = useState("");
+  const [autoArchive, setAutoArchive] = useState(false);
   const [translate, setTranslate] = useState(true);
 
   const [starting, setStarting] = useState(false);
@@ -148,6 +152,9 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
         setGroqKey(s.groqKey ?? "");
         setGeminiKey(s.geminiKey ?? "");
         setOpenRouterKey(s.openRouterKey ?? "");
+        setMegaEmail(s.megaEmail ?? "");
+        setMegaPassword(s.megaPassword ?? "");
+        setAutoArchive(s.autoArchive ?? false);
         setVoice(s.defaultVoice ?? "en-US-AndrewNeural");
         setChapterLimit(s.defaultChapterLimit ?? 5);
 
@@ -190,6 +197,9 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
           groqKey,
           geminiKey,
           openRouterKey,
+          megaEmail,
+          megaPassword,
+          autoArchive,
           defaultVoice: voice,
           defaultLanguage: language,
           defaultChapterLimit: chapterLimit,
@@ -211,6 +221,9 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
           groqKey: groqKey || undefined,
           geminiKey: geminiKey || undefined,
           openRouterKey: openRouterKey || undefined,
+          megaEmail: megaEmail || undefined,
+          megaPassword: megaPassword || undefined,
+          autoArchive,
           useBgm: false,
         }),
       });
@@ -225,7 +238,7 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
     } finally {
       setStarting(false);
     }
-  }, [groqKey, geminiKey, openRouterKey, voice, language, chapterLimit, translate, manga, onJobCreated]);
+  }, [groqKey, geminiKey, openRouterKey, megaEmail, megaPassword, autoArchive, voice, language, chapterLimit, translate, manga, onJobCreated]);
 
   // --- Voice preview ---
   // Fetches a short edge-tts sample for the selected voice and plays it.
@@ -589,6 +602,51 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
             <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer"
                className="text-[10px] text-primary underline underline-offset-2 hover:text-primary/80">
               openrouter.ai/keys (free tier available)
+            </a>
+          </div>
+        </div>
+
+        {/* Cloud Storage — for archiving finished videos */}
+        <div className="space-y-3 p-4 rounded-lg bg-muted/30 border border-border">
+          <div className="flex items-center gap-2">
+            <CloudUpload className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-medium">Cloud Storage</span>
+            <span className="text-xs text-muted-foreground">(optional — auto-upload finished videos)</span>
+          </div>
+
+          {/* Auto-archive toggle */}
+          <div className="flex items-center justify-between gap-4 p-2 rounded-lg bg-muted/50">
+            <div className="space-y-0.5">
+              <span className="text-xs font-medium">Auto-archive to cloud after render</span>
+              <p className="text-[10px] text-muted-foreground">Uploads the video + frees local disk space</p>
+            </div>
+            <Switch checked={autoArchive} onCheckedChange={setAutoArchive} />
+          </div>
+
+          {/* Mega credentials */}
+          <div className="space-y-2">
+            <Label className="text-xs font-medium">
+              Mega <span className="text-muted-foreground">(20 GB free)</span>
+            </Label>
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                type="email"
+                value={megaEmail}
+                onChange={(e) => setMegaEmail(e.target.value)}
+                placeholder="mega@email.com"
+                className="font-mono text-sm h-8"
+              />
+              <Input
+                type="password"
+                value={megaPassword}
+                onChange={(e) => setMegaPassword(e.target.value)}
+                placeholder="password"
+                className="font-mono text-sm h-8"
+              />
+            </div>
+            <a href="https://mega.nz/register" target="_blank" rel="noopener noreferrer"
+               className="text-[10px] text-primary underline underline-offset-2 hover:text-primary/80">
+              Create a free Mega account →
             </a>
           </div>
         </div>

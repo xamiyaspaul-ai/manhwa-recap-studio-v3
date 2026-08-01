@@ -139,6 +139,13 @@ export interface CreateJobInput {
   geminiKey?: string;
   openRouterKey?: string;
   openaiKey?: string;
+  megaEmail?: string;
+  megaPassword?: string;
+  r2AccountId?: string;
+  r2AccessKeyId?: string;
+  r2SecretAccessKey?: string;
+  r2Bucket?: string;
+  autoArchive?: boolean;
   bgmPath?: string | null; // BGM filename (relative to data/bgm/), null = default
   useBgm?: boolean; // whether to overlay BGM
 }
@@ -154,6 +161,13 @@ export interface AppSettings {
   geminiKey: string;
   openRouterKey: string;
   openaiKey: string;
+  megaEmail: string;
+  megaPassword: string;
+  r2AccountId: string;
+  r2AccessKeyId: string;
+  r2SecretAccessKey: string;
+  r2Bucket: string;
+  autoArchive: boolean;
   defaultVoice: string;
   defaultLanguage: string;
   defaultChapterLimit: number;

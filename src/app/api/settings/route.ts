@@ -9,6 +9,13 @@ const DEFAULTS: AppSettings = {
   geminiKey: "",
   openRouterKey: "",
   openaiKey: "",
+  megaEmail: "",
+  megaPassword: "",
+  r2AccountId: "",
+  r2AccessKeyId: "",
+  r2SecretAccessKey: "",
+  r2Bucket: "",
+  autoArchive: false,
   defaultVoice: "en-US-AndrewNeural",
   defaultLanguage: "en",
   defaultChapterLimit: 5,
@@ -19,6 +26,13 @@ const KEYS: (keyof AppSettings)[] = [
   "geminiKey",
   "openRouterKey",
   "openaiKey",
+  "megaEmail",
+  "megaPassword",
+  "r2AccountId",
+  "r2AccessKeyId",
+  "r2SecretAccessKey",
+  "r2Bucket",
+  "autoArchive",
   "defaultVoice",
   "defaultLanguage",
   "defaultChapterLimit",
@@ -28,10 +42,17 @@ function isInt(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
 }
 
-function parseValue(key: keyof AppSettings, raw: string): string | number {
+function isBool(v: unknown): v is boolean {
+  return typeof v === "boolean";
+}
+
+function parseValue(key: keyof AppSettings, raw: string): string | number | boolean {
   if (key === "defaultChapterLimit") {
     const n = parseInt(raw, 10);
     return Number.isFinite(n) ? n : DEFAULTS.defaultChapterLimit;
+  }
+  if (key === "autoArchive") {
+    return raw === "true";
   }
   return raw;
 }
@@ -45,6 +66,13 @@ async function readAllSettings(): Promise<AppSettings> {
     geminiKey: map.get("geminiKey") ?? DEFAULTS.geminiKey,
     openRouterKey: map.get("openRouterKey") ?? DEFAULTS.openRouterKey,
     openaiKey: map.get("openaiKey") ?? DEFAULTS.openaiKey,
+    megaEmail: map.get("megaEmail") ?? DEFAULTS.megaEmail,
+    megaPassword: map.get("megaPassword") ?? DEFAULTS.megaPassword,
+    r2AccountId: map.get("r2AccountId") ?? DEFAULTS.r2AccountId,
+    r2AccessKeyId: map.get("r2AccessKeyId") ?? DEFAULTS.r2AccessKeyId,
+    r2SecretAccessKey: map.get("r2SecretAccessKey") ?? DEFAULTS.r2SecretAccessKey,
+    r2Bucket: map.get("r2Bucket") ?? DEFAULTS.r2Bucket,
+    autoArchive: map.get("autoArchive") === "true",
     defaultVoice: map.get("defaultVoice") ?? DEFAULTS.defaultVoice,
     defaultLanguage: map.get("defaultLanguage") ?? DEFAULTS.defaultLanguage,
     defaultChapterLimit:
@@ -82,6 +110,14 @@ export async function PUT(req: NextRequest) {
         if (!isInt(v)) {
           return NextResponse.json(
             { error: `Invalid value for ${key}: expected number.` },
+            { status: 400 }
+          );
+        }
+        value = String(v);
+      } else if (key === "autoArchive") {
+        if (!isBool(v)) {
+          return NextResponse.json(
+            { error: `Invalid value for ${key}: expected boolean.` },
             { status: 400 }
           );
         }
