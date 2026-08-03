@@ -1,14 +1,25 @@
 import { PrismaClient } from '@prisma/client'
 
 /**
- * Prisma client with Turso (libsql) support.
+ * Prisma client with multi-database support.
  *
- * - Local dev / sandbox: DATABASE_URL is a file: path → standard SQLite Prisma.
- * - Vercel / serverless: DATABASE_URL is a libsql:// URL (Turso) → use the
- *   PrismaLibSQL adapter so Prisma talks to Turso's HTTP-based protocol.
+ * Supports 3 database backends, auto-detected from DATABASE_URL:
  *
- * Turso is a free hosted SQLite (9 GB free tier, edge-replicated) that works
- * perfectly with this app's existing schema — no migration needed.
+ * 1. Local SQLite (sandbox / laptop dev):
+ *    DATABASE_URL = file:/path/to/db.sqlite
+ *    → Standard PrismaClient with SQLite provider
+ *
+ * 2. Turso (free hosted SQLite, 9 GB):
+ *    DATABASE_URL = libsql://xxx.turso.io
+ *    → PrismaLibSQL adapter (HTTP-based, edge-replicated)
+ *
+ * 3. Supabase (free hosted PostgreSQL, 500 MB):
+ *    DATABASE_URL = postgresql://postgres:xxx@db.xxx.supabase.co:5432/postgres
+ *    → Standard PrismaClient with PostgreSQL provider
+ *
+ * Both Turso and Supabase have free tiers. Supabase gives you a full PostgreSQL
+ * database with dashboard, auth, real-time, and storage. Turso is simpler
+ * (SQLite-compatible, no schema changes needed).
  */
 
 const globalForPrisma = globalThis as unknown as {
@@ -18,9 +29,8 @@ const globalForPrisma = globalThis as unknown as {
 function createPrismaClient(): PrismaClient {
   const url = process.env.DATABASE_URL || ''
 
-  // Turso / libsql — used when deployed to Vercel or any serverless host.
+  // Option 1: Turso / libsql
   if (url.startsWith('libsql://') || url.startsWith('http://') || url.startsWith('https://')) {
-    // Lazy-import the adapter so local dev (plain SQLite) doesn't require it.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { PrismaLibSQL } = require('@prisma/adapter-libsql')
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -33,7 +43,18 @@ function createPrismaClient(): PrismaClient {
     return new PrismaClient({ adapter })
   }
 
-  // Local SQLite file (sandbox / laptop dev).
+  // Option 2: Supabase / PostgreSQL
+  // Prisma natively supports PostgreSQL — no adapter needed.
+  // Just set DATABASE_URL to the Supabase connection string and
+  // change the schema.prisma provider to "postgresql".
+  if (url.startsWith('postgresql://') || url.startsWith('postgres://')) {
+    return new PrismaClient({
+      log: process.env.NODE_ENV === 'production' ? ['error', 'warn'] : ['query'],
+      // Prisma reads DATABASE_URL directly from env for PostgreSQL
+    })
+  }
+
+  // Option 3: Local SQLite file (sandbox / laptop dev)
   return new PrismaClient({
     log: process.env.NODE_ENV === 'production' ? ['error', 'warn'] : ['query'],
   })

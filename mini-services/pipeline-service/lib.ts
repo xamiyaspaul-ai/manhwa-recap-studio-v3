@@ -14,15 +14,19 @@ import { promises as fs } from 'fs'
 import path from 'path'
 
 // ---------------------------------------------------------------------------
-// Prisma — single shared client pointing at the same SQLite DB.
-// Supports both local file: SQLite (laptop/sandbox) and libsql:// Turso
-// (when the Next.js app is deployed to Vercel and shares a Turso DB).
+// Prisma — multi-database support (SQLite, Turso, Supabase/PostgreSQL).
+// Auto-detects from DATABASE_URL:
+//   file: → SQLite (local dev)
+//   libsql:// → Turso (hosted SQLite)
+//   postgresql:// → Supabase (hosted PostgreSQL)
 // ---------------------------------------------------------------------------
 
 const globalForPrisma = globalThis as unknown as { pipelinePrisma: PrismaClient | undefined }
 
 function createPrismaClient(): PrismaClient {
   const url = process.env.DATABASE_URL || ''
+
+  // Turso / libsql
   if (url.startsWith('libsql://') || url.startsWith('http://') || url.startsWith('https://')) {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { PrismaLibSQL } = require('@prisma/adapter-libsql')
@@ -35,6 +39,14 @@ function createPrismaClient(): PrismaClient {
     const adapter = new PrismaLibSQL(libsql)
     return new PrismaClient({ adapter })
   }
+
+  // Supabase / PostgreSQL — Prisma natively supports it, no adapter needed.
+  // Just set DATABASE_URL to the Supabase connection string.
+  if (url.startsWith('postgresql://') || url.startsWith('postgres://')) {
+    return new PrismaClient({ log: ['error', 'warn'] })
+  }
+
+  // Local SQLite
   return new PrismaClient({ log: ['error', 'warn'] })
 }
 

@@ -1,0 +1,127 @@
+// Prisma schema for Supabase (PostgreSQL) — used when deploying to Vercel.
+// Same models as schema.prisma but with provider = "postgresql".
+// The deployment script (scripts/setup-vercel-db.sh) swaps this in automatically.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  // Supabase connection pooling (optional but recommended):
+  // directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Post {
+  id        String   @id @default(cuid())
+  title     String
+  content   String?
+  published Boolean  @default(false)
+  authorId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Master Recap Pipeline models
+// ---------------------------------------------------------------------------
+
+model Job {
+  id          String    @id @default(cuid())
+  mangaId     String
+  mangaTitle  String
+  coverUrl    String?
+  language    String    @default("en")
+  sourceLang  String?
+  status      String    @default("pending")
+  progress    Int       @default(0)
+  stage       String?
+  message     String?
+  totalChapters Int     @default(0)
+  doneChapters  Int     @default(0)
+  totalImages   Int     @default(0)
+  doneImages    Int     @default(0)
+  outputDir   String?
+  outputVideo String?
+  r2Key       String?
+  archiveProvider String?
+  archiveFileId   String?
+  error       String?
+  groqKey     String?
+  geminiKey   String?
+  openRouterKey String?
+  openaiKey   String?
+  megaEmail     String?
+  megaPassword  String?
+  r2AccountId   String?
+  r2AccessKeyId String?
+  r2SecretAccessKey String?
+  r2Bucket      String?
+  autoArchive   Boolean  @default(false)
+  voice       String    @default("en-US-AndrewNeural")
+  chapterLimit Int      @default(0)
+  chapterStart Int      @default(1)
+  chapterEnd   Int      @default(0)
+  translate   Boolean   @default(true)
+  bgmPath     String?
+  useBgm      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  chapters    Chapter[]
+  logs        JobLog[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Chapter {
+  id          String   @id @default(cuid())
+  jobId       String
+  index       Int
+  mangadexId  String
+  chapterNum  String?
+  title       String?
+  language    String
+  pageCount   Int      @default(0)
+  translated  Boolean  @default(false)
+  summarized  Boolean  @default(false)
+  rendered    Boolean  @default(false)
+  folder      String
+  status      String   @default("pending")
+  error       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+}
+
+model JobLog {
+  id        String   @id @default(cuid())
+  jobId     String
+  level     String   @default("info")
+  stage     String?
+  message   String
+  createdAt DateTime @default(now())
+
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([createdAt])
+}
+
+model Setting {
+  id    String @id
+  value String
+}
