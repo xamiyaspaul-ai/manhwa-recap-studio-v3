@@ -118,7 +118,7 @@ export function FeaturesGrid() {
             return (
               <div
                 key={f.title}
-                className={`group relative p-5 rounded-2xl border border-border bg-card/40 hover:border-primary/20 hover:bg-card/80 transition-all duration-300 hover:shadow-xl ${f.glowColor} cursor-default ${isVisible ? "animate-item-in" : "opacity-0"}`}
+                className={`group relative p-5 rounded-2xl border border-border bg-card/40 hover:border-primary/20 hover:bg-card/80 transition-all duration-300 hover:shadow-xl ${f.glowColor} cursor-default hover-glow-sm ${isVisible ? "animate-item-in" : "opacity-0"}`}
                 style={{ animationDelay: isVisible ? `${i * 80}ms` : "0ms" }}
               >
                 {/* Gradient accent at top */}
@@ -128,14 +128,18 @@ export function FeaturesGrid() {
                 <div className={`absolute inset-0 rounded-2xl bg-gradient-to-br ${f.gradient} opacity-0 group-hover:opacity-100 transition-opacity duration-500`} />
                 
                 <div className="relative flex items-start gap-3">
-                  <div className="p-2.5 rounded-xl bg-primary/10 group-hover:bg-primary/20 transition-all duration-300 group-hover:shadow-md group-hover:shadow-primary/10">
+                  <div className="p-2.5 rounded-xl bg-primary/10 group-hover:bg-primary/20 transition-all duration-300 group-hover:shadow-md group-hover:shadow-primary/10 relative">
                     <Icon className="h-4 w-4 text-primary" />
+                    {/* Orbiting dot on icon container when hovered */}
+                    <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <span className="w-1 h-1 rounded-full bg-primary opacity-0 group-hover:opacity-100 transition-opacity duration-300 animate-orbit" />
+                    </span>
                   </div>
                   <div className="flex-1 min-w-0">
                     <h3 className="text-sm font-bold mb-1.5 group-hover:text-primary transition-colors">
                       {f.title}
                     </h3>
-                    <p className="text-xs text-muted-foreground leading-relaxed">
+                    <p className="text-xs text-muted-foreground leading-relaxed group-hover:text-foreground/80 group-hover:text-[13px] transition-all duration-300">
                       {f.desc}
                     </p>
                   </div>

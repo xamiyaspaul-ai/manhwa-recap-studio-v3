@@ -77,6 +77,13 @@ export function SettingsDialog() {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Listen for external open trigger (e.g. command palette)
+  useEffect(() => {
+    const handler = () => setOpen(true);
+    window.addEventListener("open-settings-dialog", handler);
+    return () => window.removeEventListener("open-settings-dialog", handler);
+  }, []);
+
   const loadSettings = useCallback(async () => {
     setLoading(true);
     try {

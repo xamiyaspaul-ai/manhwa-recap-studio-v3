@@ -284,3 +284,80 @@
 5. **[MEDIUM] Enhance pipeline stats with real-time updates** — Poll API periodically or use socket for live stats
 6. **[LOW] PWA support** — Service worker + manifest for offline-capable installable app
 7. **[LOW] Accessibility audit** — Full keyboard navigation, ARIA labels, screen reader testing
+
+---
+## Round 9 — Cron Cycle (2026-08-06)
+
+### Current Project Status Assessment
+- **Cycle**: Round 9 (Cron-triggered review & development cycle)
+- **Dev Server**: Next.js 16.1.3 (Turbopack) — port 3000, compiles successfully, GET / 200
+- **Lint**: 0 errors, 0 warnings (after fixing React 19 strict-mode issues)
+- **Database**: SQLite (Prisma ORM) — unchanged
+- **Pipeline Service**: Still NOT running (ML deps not available in sandbox)
+- **Component Count**: 25 pipeline components (3 new), 7 hooks (1 new)
+
+### Completed Modifications (Round 9)
+
+#### [Mandatory] Styling Improvements (Task 9-a) ✅
+1. **globals.css** — 8 new CSS utilities/animations:
+   - `.glass-card-hover`, `.animate-count-pulse`, `.animate-draw-line`, `.gradient-separator`
+   - `.animate-orbit`, `.hover-glow-sm`, `.text-shadow-sm`, `.animate-fade-in-scale`
+2. **stats-bar.tsx** — StatCard enhanced with decorative mini-bars (5 vertical bars per card using item.barColor), animated gradient draw line at bottom, hover-glow-sm effect
+3. **features-grid.tsx** — Feature cards enhanced with orbiting 4px dot on icon container (animate-orbit, visible on hover), hover-glow-sm, description text expansion on hover (text-[13px])
+4. **activity-feed.tsx** — Added vertical timeline line (gradient from primary/30 → transparent), colored 2px left border accent per status, timeline dots, active job rows get animate-breathe
+5. **page.tsx** — Replaced all 8 plain `<Separator className="max-w-4xl mx-auto opacity-30" />` with `<div className="gradient-separator max-w-4xl mx-auto my-0" />` for richer visual section breaks
+
+#### [Mandatory] New Features (Task 9-b) ✅
+1. **Notification Center** (`notification-center.tsx`) — Bell icon button in header (search view only) with:
+   - Red dot badge when active/failed jobs exist
+   - Dropdown fetches `/api/jobs?limit=10` on open, maps jobs to notification items
+   - Status-appropriate icons (CheckCircle2, AlertCircle, Clock, Loader2) and color coding
+   - "Mark all read" button, empty state, click-outside to close
+   - animate-fade-in-scale entrance
+
+2. **Command Palette** (`command-palette.tsx`) — Spotlight-style command palette:
+   - Triggered by Cmd+K / Ctrl+K keyboard shortcut
+   - 8 commands: Search, Bookmarks, Settings, Theme, History, Trending, How It Works, New Job
+   - Search input filters commands by label/description
+   - Arrow key navigation (↑↓), Enter to execute, Esc to close
+   - Full-screen overlay with backdrop blur, centered dialog
+   - Keyboard hint bar at bottom
+
+3. **Recently Viewed Manga** — Hook + Component:
+   - `use-recently-viewed.ts` hook: localStorage-backed, max 20 items, sorted by viewedAt desc
+   - `recently-viewed.tsx` component: horizontal scrollable row with snap, 48×68px cover images, X remove on hover, "Clear all" button
+   - Tracks manga when user clicks to configure (in handleSelectManga)
+   - Shown between SearchSection and first gradient separator
+
+#### Lint Fixes Applied ✅
+- Fixed JSX comment parse errors in `recently-viewed.tsx` (Turbopack parser issue with JSX comments — removed comments)
+- Fixed React 19 `react-hooks/set-state-in-effect` in `notification-center.tsx` — converted fetch+loading to render-time pattern
+
+### Verification Results
+- ✅ `bun run lint` — 0 errors, 0 warnings
+- ✅ Dev server compiles page successfully — GET / 200
+- ✅ All new features use existing theme system (oklch amber, shadcn/ui)
+- ✅ React 19 strict-mode compliance verified
+
+### Updated Component Count
+- **25 pipeline components** (was 22): +notification-center.tsx, +command-palette.tsx, +recently-viewed.tsx
+- **7 hooks** (was 6): +use-recently-viewed.ts
+
+---
+## Unresolved Issues & Next-Phase Recommendations
+
+### Known Issues
+1. **Dev Server Stability**: Intermittent OOM kills in sandbox. Mitigated with background restart. NOT a code issue.
+2. **Caddy Proxy 502**: Caddy on port 81 can't reach port 3000. Dev server works directly on port 3000.
+3. **Pipeline Service Not Running**: Python service on port 3001 requires ML dependencies not in sandbox.
+4. **React 19 Lint Strictness**: `react-hooks/refs` and `react-hooks/set-state-in-effect` rules require render-time patterns. Future code must follow these.
+5. **Turbopack JSX Comment Quirk**: JSX comments inside certain map callbacks cause parse errors. Avoid JSX comments in mapped children or use HTML comments instead.
+
+### Recommended Next-Phase Priorities
+1. **[HIGH] Chapter page preview thumbnails** — Show thumbnail previews of chapter pages in manga-config before starting pipeline
+2. **[HIGH] Enhance pipeline stats with real-time updates** — Poll API periodically for live dashboard stats
+3. **[MEDIUM] PWA support** — Service worker + manifest for installable app
+4. **[MEDIUM] Job detail modal** — Click a job in history to see full details in a modal instead of switching view
+5. **[MEDIUM] Manga detail page** — Show manga info, cover, tags, description when searching (expandable card)
+6. **[LOW] Accessibility audit** — Full keyboard navigation, ARIA labels, screen reader testing
+7. **[LOW] Export/share functionality** — Share recap video links, export job configs as JSON

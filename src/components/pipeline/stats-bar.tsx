@@ -63,8 +63,9 @@ function AnimatedCounter({ target, duration = 1200 }: { target: number; duration
 
 function StatCard({ item }: { item: PlatformStat }) {
   const Icon = item.icon;
+  const miniBarHeights = [40, 70, 100, 60, 85];
   return (
-    <div className="relative flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-card/60 border border-border overflow-hidden group hover:border-primary/20 hover:bg-card/90 transition-all duration-300">
+    <div className="relative flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-card/60 border border-border overflow-hidden group hover:border-primary/20 hover:bg-card/90 transition-all duration-300 hover-glow-sm">
       <div
         className={`absolute inset-y-0 left-0 ${item.barColor} opacity-[0.06] transition-all duration-1000 group-hover:opacity-[0.12]`}
         style={{ width: "100%" }}
@@ -77,7 +78,25 @@ function StatCard({ item }: { item: PlatformStat }) {
           <span className="text-sm font-bold tabular-nums leading-none">{item.value}</span>
           <span className="text-[10px] text-muted-foreground/70 leading-tight mt-0.5">{item.label}</span>
         </div>
+        {/* Decorative mini-bars */}
+        <div className="flex items-end gap-[2px] ml-1 h-4 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+          {miniBarHeights.map((h, i) => (
+            <div
+              key={i}
+              className={`w-[3px] rounded-full ${item.barColor}`}
+              style={{ height: `${h}%`, opacity: 0.4 }}
+            />
+          ))}
+        </div>
       </div>
+      {/* Animated gradient line at bottom */}
+      <div
+        className="absolute bottom-0 left-0 h-[1px] animate-draw-line"
+        style={{
+          background: `linear-gradient(90deg, transparent, var(--primary), transparent)`,
+          width: "100%",
+        }}
+      />
     </div>
   );
 }

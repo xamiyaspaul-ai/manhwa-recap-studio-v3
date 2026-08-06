@@ -83,17 +83,35 @@ export function ActivityFeed() {
           ))}
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="relative space-y-2 pl-4">
+          {/* Vertical timeline line */}
+          {activities.length > 1 && (
+            <div
+              className="absolute left-[7px] top-2 bottom-2 w-px"
+              style={{
+                background: "linear-gradient(180deg, oklch(0.78 0.17 65 / 0.3), transparent)",
+              }}
+            />
+          )}
           {activities.map((a, i) => {
             const cfg = STATUS_CONFIG[a.status] ?? STATUS_CONFIG.pending;
             const Icon = cfg.icon;
             const isDone = a.status === "done";
             const isActive = ["scraping", "summarizing", "translating", "rendering", "merging"].includes(a.status);
+            const statusBorderColor = isDone
+              ? "border-l-emerald-500/40"
+              : isActive
+                ? "border-l-amber-500/40"
+                : a.status === "error"
+                  ? "border-l-rose-500/40"
+                  : "border-l-border";
             return (
               <div
                 key={a.id}
                 className={
-                  "flex items-center gap-3 p-3 rounded-xl border bg-card/40 transition-all duration-200 " +
+                  "relative flex items-center gap-3 p-3 rounded-xl border bg-card/40 transition-all duration-200 border-l-2 " +
+                  statusBorderColor +
+                  " " +
                   (isVisible ? "animate-item-in" : "opacity-0") +
                   " " +
                   (isDone
@@ -101,10 +119,15 @@ export function ActivityFeed() {
                     : isActive
                       ? "border-amber-500/15"
                       : "border-border"
-                  )
+                  ) +
+                  (isActive ? " animate-breathe" : "")
                 }
                 style={{ animationDelay: isVisible ? `${i * 60}ms` : "0ms" }}
               >
+                {/* Timeline dot */}
+                <div
+                  className={"absolute -left-4 top-1/2 -translate-y-1/2 w-[7px] h-[7px] rounded-full border-2 border-background " + (isDone ? "bg-emerald-400" : isActive ? "bg-amber-400" : a.status === "error" ? "bg-rose-400" : "bg-muted-foreground/40")}
+                />
                 <div className={"p-1.5 rounded-lg " + cfg.bg + " flex-shrink-0 relative"}>
                   <Icon className={"h-3.5 w-3.5 " + cfg.color + (isActive ? " animate-spin" : "")} />
                   {isActive && (

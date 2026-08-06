@@ -1,7 +1,11 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
-import { Github, Zap, Keyboard, ChevronUp, Sun, Moon, Heart, ArrowRight, Sparkles, Bell } from "lucide-react";
+import { Github, Zap, Keyboard, ChevronUp, Sun, Moon, Heart, ArrowRight, Sparkles } from "lucide-react";
+import { NotificationCenter } from "@/components/pipeline/notification-center";
+import { CommandPalette } from "@/components/pipeline/command-palette";
+import { RecentlyViewed } from "@/components/pipeline/recently-viewed";
+import { useRecentlyViewed } from "@/hooks/use-recently-viewed";
 import { useTheme } from "next-themes";
 import {
   Popover,
@@ -36,6 +40,7 @@ const SHORTCUTS = [
   { key: "/", desc: "Focus search" },
   { key: "Esc", desc: "Clear search results" },
   { key: "B", desc: "Toggle bookmarks" },
+  { key: "⌘K", desc: "Command palette" },
 ];
 
 const TECH_BADGES = ["Next.js 16", "Tailwind CSS 4", "Prisma", "Framer Motion", "Socket.IO", "TypeScript"];
@@ -49,6 +54,8 @@ export default function Home() {
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [showBookmarks, setShowBookmarks] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const { recentlyViewed, addViewed, removeItem: removeRecentlyViewed, clearAll: clearRecentlyViewed } = useRecentlyViewed();
   const { theme, setTheme } = useTheme();
   const scrollProgress = useScrollProgress();
   const { isBookmarked, toggleBookmark } = useBookmarks();
@@ -66,9 +73,10 @@ export default function Home() {
   const { job, logs, connected } = useJobProgress(currentJobId);
 
   const handleSelectManga = useCallback((manga: MangadexManga) => {
+    addViewed({ id: manga.id, title: manga.title, coverUrl: manga.coverUrl || "" });
     setSelectedManga(manga);
     setView("config");
-  }, []);
+  }, [addViewed]);
 
   const handleJobCreated = useCallback((jobId: string) => {
     setCurrentJobId(jobId);
@@ -122,6 +130,11 @@ export default function Home() {
         e.preventDefault();
         setShowBookmarks((v) => !v);
       }
+
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setCommandPaletteOpen((v) => !v);
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -145,6 +158,54 @@ export default function Home() {
   const toggleTheme = useCallback(() => {
     setTheme(theme === "dark" ? "light" : "dark");
   }, [theme, setTheme]);
+
+  const handleCommandAction = useCallback(
+    (actionId: string) => {
+      switch (actionId) {
+        case "search": {
+          if (view !== "search") handleNewJob();
+          const input = document.getElementById("search-input") as HTMLInputElement | null;
+          if (input) {
+            input.focus();
+            input.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+          break;
+        }
+        case "bookmarks":
+          if (view !== "search") handleNewJob();
+          setShowBookmarks(true);
+          break;
+        case "settings":
+          window.dispatchEvent(new CustomEvent("open-settings-dialog"));
+          break;
+        case "theme":
+          toggleTheme();
+          break;
+        case "history": {
+          if (view !== "search") handleNewJob();
+          const el = document.getElementById("section-job-history");
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+          break;
+        }
+        case "trending": {
+          if (view !== "search") handleNewJob();
+          const el = document.getElementById("section-trending");
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+          break;
+        }
+        case "how-it-works": {
+          if (view !== "search") handleNewJob();
+          const el = document.getElementById("section-how-it-works");
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+          break;
+        }
+        case "new-job":
+          handleNewJob();
+          break;
+      }
+    },
+    [view, handleNewJob, toggleTheme]
+  );
 
   return (
     <div className="min-h-screen flex flex-col bg-background bg-grain">
@@ -182,6 +243,9 @@ export default function Home() {
             {/* Connection indicator — only shown when not in search view */}
             {view !== "search" && <ConnectionIndicator connected={connected} />}
 
+            {/* Notification center — only shown on search view */}
+            {view === "search" && <NotificationCenter />}
+
             {/* Settings dialog button */}
             <SettingsDialog />
 
@@ -211,7 +275,7 @@ export default function Home() {
                 </div>
                 <div className="pt-1 border-t border-border">
                   <p className="text-[10px] text-muted-foreground/60 leading-relaxed">
-                    Bookmarks are saved locally. Press <kbd className="px-1 py-0.5 rounded border border-border bg-muted font-mono text-[9px]">B</kbd> to toggle.
+                    Bookmarks are saved locally. Press <kbd className="px-1 py-0.5 rounded border border-border bg-muted font-mono text-[9px]">B</kbd> to toggle. Press <kbd className="px-1 py-0.5 rounded border border-border bg-muted font-mono text-[9px]">⌘K</kbd> for commands.
                   </p>
                 </div>
               </PopoverContent>
@@ -261,40 +325,53 @@ export default function Home() {
               onBookmarkToggle={handleBookmarkToggle}
             />
 
-            <Separator className="max-w-4xl mx-auto opacity-30" />
+            <RecentlyViewed
+              items={recentlyViewed}
+              onSelectManga={handleSelectManga}
+              onRemoveItem={removeRecentlyViewed}
+              onClearAll={clearRecentlyViewed}
+            />
+
+            <div className="gradient-separator max-w-4xl mx-auto my-0" />
 
             {/* Bookmarks toggle + section */}
             {showBookmarks && (
               <BookmarksSection onSelectManga={handleSelectManga} />
             )}
 
-            <TrendingSearches onPick={handleTrendingPick} />
+            <div id="section-trending">
+              <TrendingSearches onPick={handleTrendingPick} />
+            </div>
 
-            <Separator className="max-w-4xl mx-auto opacity-30" />
+            <div className="gradient-separator max-w-4xl mx-auto my-0" />
 
-            <HowItWorks />
+            <div id="section-how-it-works">
+              <HowItWorks />
+            </div>
 
-            <Separator className="max-w-4xl mx-auto opacity-30" />
+            <div className="gradient-separator max-w-4xl mx-auto my-0" />
 
             <FeaturesGrid />
 
-            <Separator className="max-w-4xl mx-auto opacity-30" />
+            <div className="gradient-separator max-w-4xl mx-auto my-0" />
 
             <PipelineStats />
 
-            <Separator className="max-w-4xl mx-auto opacity-30" />
+            <div className="gradient-separator max-w-4xl mx-auto my-0" />
 
             <Testimonials />
 
-            <Separator className="max-w-4xl mx-auto opacity-30" />
+            <div className="gradient-separator max-w-4xl mx-auto my-0" />
 
-            <JobHistory onSelectJob={handleSelectHistoryJob} refreshKey={historyRefresh} />
+            <div id="section-job-history">
+              <JobHistory onSelectJob={handleSelectHistoryJob} refreshKey={historyRefresh} />
+            </div>
 
-            <Separator className="max-w-4xl mx-auto opacity-30" />
+            <div className="gradient-separator max-w-4xl mx-auto my-0" />
 
             <FAQ />
 
-            <Separator className="max-w-4xl mx-auto opacity-30" />
+            <div className="gradient-separator max-w-4xl mx-auto my-0" />
 
             <ActivityFeed />
           </div>
@@ -331,6 +408,14 @@ export default function Home() {
           <ChevronUp className="h-5 w-5" />
         </button>
       </div>
+
+      {/* Command palette */}
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        onAction={handleCommandAction}
+        isDark={theme === "dark"}
+      />
 
       {/* CTA Section */}
       {view === "search" && (
