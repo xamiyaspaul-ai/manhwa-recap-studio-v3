@@ -994,11 +994,35 @@ export async function generateImageNarrations(
   // This sends a tiny test request to each configured provider to check if
   // the API key is valid and the service is reachable. Only providers that
   // pass the test are added to the active pool — no wasted time on dead keys.
-  type VlmProvider = 'groq' | 'gemini' | 'openrouter' | 'z-ai'
-  const activeProviders: VlmProvider[] = ['z-ai'] // z-ai is always available
+  type VlmProvider = 'groq' | 'gemini' | 'openrouter' | 'ollama' | 'z-ai'
+  const activeProviders: VlmProvider[] = [] // populated by pre-flight tests
+  // NOTE: z-ai is NOT added by default anymore — on self-hosted instances it's
+  // unavailable. It gets added back only if OLLAMA_BASE_URL is also unset,
+  // preserving backward compatibility in the Z.ai sandbox environment.
+  if (!process.env.OLLAMA_BASE_URL && !process.env.GROQ_API_KEY && !process.env.GEMINI_API_KEY && !process.env.OPENROUTER_API_KEY) {
+    activeProviders.push('z-ai')
+  }
 
   async function testProvider(provider: VlmProvider): Promise<boolean> {
     try {
+      if (provider === 'ollama') {
+        const baseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
+        const model = process.env.OLLAMA_VISION_MODEL || 'qwen2.5-vl:7b'
+        const res = await fetch(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(8000) })
+        if (!res.ok) {
+          console.warn(`[VLM] ✗ Ollama not reachable at ${baseUrl} (HTTP ${res.status})`)
+          return false
+        }
+        const data = await res.json() as { models?: Array<{ name: string }> }
+        const modelNames = (data.models || []).map((m) => m.name)
+        const hasModel = modelNames.some((n) => n.includes(model.split(':')[0]))
+        if (!hasModel) {
+          console.warn(`[VLM] ✗ Ollama running but model '${model}' not found. Available: ${modelNames.join(', ')}`)
+          return false
+        }
+        console.log(`[VLM] ✓ Ollama ready at ${baseUrl} with ${model}`)
+        return true
+      }
       if (provider === 'groq' && process.env.GROQ_API_KEY) {
         const res = await fetch('https://api.groq.com/openai/v1/models', {
           headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
@@ -1033,22 +1057,24 @@ export async function generateImageNarrations(
   }
 
   // Test all configured providers in parallel
-  console.log('[VLM] Pre-flight: testing API keys...')
+  console.log('[VLM] Pre-flight: testing providers...')
   const tests = await Promise.all([
+    testProvider('ollama'),
     testProvider('groq'),
     testProvider('gemini'),
     testProvider('openrouter'),
   ])
-  if (tests[0]) activeProviders.push('groq')
-  if (tests[1]) activeProviders.push('gemini')
-  if (tests[2]) activeProviders.push('openrouter')
+  if (tests[0]) activeProviders.push('ollama')
+  if (tests[1]) activeProviders.push('groq')
+  if (tests[2]) activeProviders.push('gemini')
+  if (tests[3]) activeProviders.push('openrouter')
 
-  // z-ai doesn't need a key test (built-in SDK) but we note its status
-  console.log('[VLM] ✓ z-ai is always available (built-in SDK)')
-
-  if (activeProviders.length === 1 && activeProviders[0] === 'z-ai') {
-    console.warn('[VLM] ⚠ No external VLM keys are valid — using z-ai only (may be rate-limited)')
-    console.warn('[VLM] ⚠ Get a free Groq key at console.groq.com/keys for faster transcription')
+  if (activeProviders.length === 0) {
+    activeProviders.push('z-ai')
+    console.warn('[VLM] ⚠ No providers are available — falling back to z-ai (may not work outside Z.ai sandbox)')
+    console.warn('[VLM] ⚠ Install Ollama (ollama.com) or set GROQ_API_KEY for transcription')
+  } else {
+    console.log('[VLM] ✓ z-ai available as fallback (built-in SDK)')
   }
 
   console.log(
@@ -1075,7 +1101,8 @@ export async function generateImageNarrations(
     // Get providers that are still active (not disabled by circuit breaker)
     const available = activeProviders.filter((p) => !disabledProviders.has(p))
     if (available.length === 0) {
-      // All disabled — fall back to z-ai as last resort
+      // All disabled — fall back to ollama (if available) or z-ai as last resort
+      if (activeProviders.includes('ollama')) return 'ollama'
       return 'z-ai'
     }
     // Even round-robin: each provider gets an equal share of batches.
@@ -1095,7 +1122,9 @@ export async function generateImageNarrations(
     let succeeded = false
     let countedPerImage = false  // set true if single-image fallback counted panels
     try {
-      if (providerLabel === 'groq') {
+      if (providerLabel === 'ollama') {
+        batchTexts = await narrateImageBatchOllama(images, startIdx)
+      } else if (providerLabel === 'groq') {
         batchTexts = await narrateImageBatchGroq(images, startIdx)
       } else if (providerLabel === 'gemini') {
         batchTexts = await narrateImageBatchGemini(images, startIdx)
@@ -1653,6 +1682,123 @@ async function narrateImageBatchGroq(imgPaths: string[], batchStart: number): Pr
 
 export function isOpenRouterVlmConfigured(): boolean {
   return Boolean(process.env.OPENROUTER_API_KEY)
+}
+
+export function isOllamaConfigured(): boolean {
+  // Ollama is "configured" if OLLAMA_BASE_URL is set (or default localhost) and
+  // we don't need an API key — but we check if it's actually reachable later.
+  const baseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
+  return Boolean(baseUrl)
+}
+
+// OLLAMA VLM — local inference via Ollama's OpenAI-compatible API.
+// Uses a vision-language model (e.g. qwen2.5-vl:7b) to transcribe panel text.
+// Completely free, no API key needed, runs on your own hardware.
+// Ollama exposes /v1/chat/completions with the same format as OpenAI.
+
+async function narrateImageBatchOllama(imgPaths: string[], batchStart: number): Promise<string[]> {
+  // Check cache first (same cache as other providers).
+  const cachedResults: (string | null)[] = []
+  for (const imgPath of imgPaths) {
+    cachedResults.push(await getVlmCached(vlmCacheKey(imgPath)))
+  }
+  if (cachedResults.every((c) => c !== null)) {
+    console.log(`[VLM:ollama] cache hit — all ${imgPaths.length} panels cached, skipping API call`)
+    return cachedResults.map((c) => c ?? '')
+  }
+
+  const baseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
+  const model = process.env.OLLAMA_VISION_MODEL || 'qwen2.5-vl:7b'
+
+  // Build multi-image content (same prompt as other providers for consistency).
+  const content: Array<
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } }
+  > = [
+    {
+      type: 'text',
+      text:
+        'You are a precise transcriber for webtoon/manhwa panels, not a narrator. ' +
+        'I will send you multiple manga panel images ' +
+        `(in the order they appear below). For EACH panel, transcribe ONLY the actual text you can see inside ` +
+        'speech bubbles, thought bubbles, and caption/narration boxes. ' +
+        'Translate non-English text into natural English.\n\n' +
+        'Rules:\n' +
+        '1. Output text VERBATIM (translated) — do not paraphrase, summarize, or add narration.\n' +
+        '2. Do not describe artwork, action, or expressions — only transcribe written text.\n' +
+        '3. If a panel has NO readable text, output empty string for that panel.\n' +
+        '4. Sound effects ("BOOM", "CRASH") — include only if the main text.\n' +
+        '5. Each element is an object: {"index": <1-based panel number>, "text": "<transcribed text or empty string>"}.\n' +
+        '6. Return ONLY a valid JSON array — no preamble, no markdown fences, no explanation.',
+    },
+  ]
+
+  // Read all images and add to content.
+  for (const imgPath of imgPaths) {
+    const buf = await fs.readFile(imgPath)
+    const b64 = buf.toString('base64')
+    const ext = path.extname(imgPath).toLowerCase()
+    const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
+    content.push({
+      type: 'image_url',
+      image_url: { url: `data:${mime};base64,${b64}` },
+    })
+  }
+
+  const MAX_RETRIES = 2
+  const BASE_DELAY_MS = 5000
+  let lastErr: unknown = null
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content }],
+          temperature: 0.1,
+          max_tokens: 2048,
+          // Ollama-specific: keep_alive keeps model in memory between calls
+          // This avoids cold-start latency on subsequent batches.
+          stream: false,
+        }),
+        signal: AbortSignal.timeout(120000), // Ollama local inference can be slow
+      })
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        throw new Error(`Ollama HTTP ${res.status}: ${body.slice(0, 200)}`)
+      }
+
+      const data = await res.json() as {
+        choices?: Array<{ message?: { content?: string } }>
+      }
+      const raw = data?.choices?.[0]?.message?.content
+      if (!raw) throw new Error('empty Ollama response')
+
+      const texts = parseBatchResponse(raw, imgPaths.length)
+
+      // Cache each panel's transcription (same cache as other providers).
+      for (let i = 0; i < imgPaths.length; i++) {
+        if (texts[i]) {
+          void setVlmCached(vlmCacheKey(imgPaths[i]), texts[i])
+        }
+      }
+
+      return texts
+    } catch (err) {
+      lastErr = err
+      const msg = err instanceof Error ? err.message : String(err)
+      const isRetryable = /5\d{2}|server error|timeout|econnreset|socket hang up|fetch failed|aborted/i.test(msg)
+      if (!isRetryable || attempt === MAX_RETRIES) throw err
+      const delayMs = BASE_DELAY_MS * Math.pow(2, attempt)
+      console.warn(`[VLM:ollama] batch retry ${attempt + 1}/${MAX_RETRIES + 1} failed (${msg.slice(0, 80)}) — retrying in ${delayMs}ms`)
+      await sleep(delayMs)
+    }
+  }
+
+  throw lastErr
 }
 
 async function narrateImageBatchOpenRouter(imgPaths: string[], batchStart: number): Promise<string[]> {

@@ -115,7 +115,7 @@ class PipelineConfig:
     groq_api_key: Optional[str] = None
     groq_model: str = "llama-3.3-70b-versatile"
     translate: bool = True
-    narration_provider: str = "auto"  # auto|openai|groq|none
+    narration_provider: str = "auto"  # auto|openai|groq|ollama|none
     narration_model: Optional[str] = None  # override model for narration
     progress_file: Optional[Path] = None  # JSON file the Node service polls
     slice_only: bool = False  # if True, only run panel slicing then exit (used by the Node orchestrator so VLM can read individual sliced panels)
@@ -1308,32 +1308,60 @@ def translate_text(cfg: PipelineConfig, text: str, cache_tag: str) -> str:
         out_path.write_text("", encoding="utf-8")
         return ""
 
-    if not cfg.translate or not cfg.groq_api_key:
-        log.info("[%s] translation disabled/no Groq key — using raw text as-is", cache_tag)
+    if not cfg.translate:
+        log.info("[%s] translation disabled — using raw text as-is", cache_tag)
         out_path.write_text(text, encoding="utf-8")
         return text
 
+    # Try Groq first (fast, free tier available), then Ollama as fallback
+    providers_tried = []
+
+    if cfg.groq_api_key:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=cfg.groq_api_key, base_url=GROQ_BASE_URL)
+            resp = client.chat.completions.create(
+                model=cfg.groq_model,
+                messages=[
+                    {"role": "system", "content": TRANSLATE_SYSTEM_PROMPT},
+                    {"role": "user", "content": text},
+                ],
+                temperature=0.2,
+                timeout=60,
+            )
+            translated = resp.choices[0].message.content.strip()
+            if not translated:
+                translated = text
+            out_path.write_text(translated, encoding="utf-8")
+            log.info("[%s] translated via Groq (%d chars)", cache_tag, len(translated))
+            return translated
+        except Exception as e:
+            log.warning("[%s] Groq translation failed (%s)", cache_tag, e)
+            providers_tried.append("Groq")
+
+    # Fallback: Ollama (local, free)
+    ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434") + "/v1"
+    ollama_model = os.environ.get("OLLAMA_TEXT_MODEL", "llama3.2:3b")
     try:
         from openai import OpenAI
-
-        client = OpenAI(api_key=cfg.groq_api_key, base_url=GROQ_BASE_URL)
+        client = OpenAI(api_key="ollama", base_url=ollama_url)
         resp = client.chat.completions.create(
-            model=cfg.groq_model,
+            model=ollama_model,
             messages=[
                 {"role": "system", "content": TRANSLATE_SYSTEM_PROMPT},
                 {"role": "user", "content": text},
             ],
             temperature=0.2,
-            timeout=60,
+            timeout=120,
         )
         translated = resp.choices[0].message.content.strip()
         if not translated:
             translated = text
         out_path.write_text(translated, encoding="utf-8")
-        log.info("[%s] translated text cached (%d chars)", cache_tag, len(translated))
+        log.info("[%s] translated via Ollama/%s (%d chars)", cache_tag, ollama_model, len(translated))
         return translated
     except Exception as e:
-        log.warning("[%s] Groq translation failed (%s) — using raw text as-is", cache_tag, e)
+        log.warning("[%s] Ollama translation also failed (%s) — using raw text", cache_tag, e)
         out_path.write_text(text, encoding="utf-8")
         return text
 
@@ -1409,6 +1437,8 @@ def rephrase_text(cfg: PipelineConfig, text: str, cache_tag: str, prev_tail: str
             provider = "openai"
         elif cfg.groq_api_key:
             provider = "groq"
+        elif os.environ.get("OLLAMA_BASE_URL") or os.path.exists("/usr/local/bin/ollama") or os.path.exists("/usr/bin/ollama"):
+            provider = "ollama"
         else:
             provider = "none"
 
@@ -1420,7 +1450,20 @@ def rephrase_text(cfg: PipelineConfig, text: str, cache_tag: str, prev_tail: str
 
     from openai import OpenAI
 
-    if provider == "openai":
+    if provider == "ollama":
+        # Ollama exposes an OpenAI-compatible API at localhost:11434/v1
+        ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434") + "/v1"
+        ollama_model = os.environ.get("OLLAMA_TEXT_MODEL", "llama3.2:3b")
+        log.info("[%s] using Ollama narration: %s at %s", cache_tag, ollama_model, ollama_url)
+        try:
+            client = OpenAI(api_key="ollama", base_url=ollama_url)
+            model = cfg.narration_model or ollama_model
+        except Exception as e:
+            log.warning("[%s] Ollama client creation failed (%s) — falling back to verbatim", cache_tag, e)
+            narration = _strip_forbidden(text)
+            out_path.write_text(narration, encoding="utf-8")
+            return narration
+    elif provider == "openai":
         if not openai_key:
             log.error("[%s] narration provider=openai but no OPENAI_API_KEY — falling back to verbatim", cache_tag)
             narration = _strip_forbidden(text)
@@ -2158,8 +2201,8 @@ def parse_args(argv: Optional[List[str]] = None) -> PipelineConfig:
         help="OpenAI API key for narrative rewriting (or set OPENAI_API_KEY env var).",
     )
     parser.add_argument(
-        "--narration-provider", default="auto", choices=["auto", "openai", "groq", "none"],
-        help="LLM provider for narrative rewriting (default: auto = prefer OpenAI, fall back to Groq, else none).",
+        "--narration-provider", default="auto", choices=["auto", "openai", "groq", "ollama", "none"],
+        help="LLM provider for narrative rewriting (default: auto = prefer OpenAI > Groq > Ollama > none).",
     )
     parser.add_argument(
         "--narration-model", default=None,
