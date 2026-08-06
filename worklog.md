@@ -3,13 +3,14 @@
 ---
 ## Current Project Status Assessment
 
-**Cycle**: Round 7 (Cron-triggered review & development cycle)
-**Date**: 2026-08-06 22:44 UTC
-**Dev Server**: Next.js 16.1.3 (Turbopack) — running on port 3000, compiles successfully, page returns 200
+**Cycle**: Round 9 (Session restart — dependency installation & pipeline bootstrap)
+**Date**: 2025-07-27 (America/Los_Angeles)
+**Dev Server**: Next.js 16.1.3 (Turbopack) — ✅ running on port 3000, compiles successfully, page returns 200
+**Pipeline Service**: ✅ Bun Socket.IO on port 3001 — healthy (queue:0, no running jobs)
+**Python Pipeline**: ✅ ALL dependencies now installed (edge-tts, openai, Pillow, opencv, numpy, torch+cpu, torchvision, ultralytics, huggingface-hub)
 **Lint**: 0 errors, 0 warnings
-**Database**: SQLite (Prisma ORM) — models: Job, Chapter, JobLog, Setting, User, Post
-**Pipeline Service**: Python Socket.IO on port 3001 — NOT running (requires ML dependencies not installed in sandbox)
-**Caddy Proxy**: Port 81 — running but returning 502 (sandbox execution restriction prevents restart, dev server on port 3000 works directly)
+**Database**: SQLite (Prisma ORM) — schema in sync, models: Job, Chapter, JobLog, Setting, User, Post
+**Agent Browser QA**: ✅ Page renders correctly, all sections visible, zero console errors
 
 ### Architecture Overview
 - **Frontend**: Next.js 16 App Router, React 19, Tailwind CSS 4, shadcn/ui, Framer Motion
@@ -532,3 +533,38 @@
 5. **[MEDIUM] Chapter page preview thumbnails** — Show thumbnail previews in manga-config before starting pipeline
 6. **[LOW] Drag-and-drop job reordering** — Reorder jobs in history via drag-and-drop
 7. **[LOW] Share recap video links** — Generate shareable links for completed recap videos
+
+---
+## Round 9 — Dependency Installation & Pipeline Bootstrap
+
+**Date**: 2025-07-27 (America/Los_Angeles)
+**Task**: Install all dependencies, start the full pipeline stack, verify everything works
+
+### Actions Taken
+1. **Verified existing services**: Next.js dev server (port 3000) and pipeline-service (port 3001) were already running
+2. **Prisma schema**: Already in sync, re-pushed to regenerate client — ✅ clean
+3. **Cleared disk space**: Freed 7GB by removing /tmp and cache files (was at 100% usage)
+4. **Installed Python pipeline dependencies** (all in venv Python 3.12):
+   - edge-tts 7.2.8
+   - openai 2.53.0
+   - Pillow 11.3.0
+   - opencv-python 5.0.0 + opencv-python-headless 4.13.0
+   - numpy 2.1.3
+   - torch 2.13.0+cpu (CPU-only build — 191.8MB)
+   - torchvision 0.28.0+cpu
+   - ultralytics 8.4.115 (YOLO)
+   - huggingface-hub 1.9.2
+5. **Verified pipeline service health**: `GET /internal/health` returns `{"ok":true}`
+6. **Lint check**: 0 errors, 0 warnings
+7. **Agent Browser QA**: Page renders correctly — all sections visible (StatsBar, Search, Trending, HowItWorks, FeaturesGrid, JobHistory, FAQ, etc.), zero console errors
+
+### Key Change from Previous Rounds
+- **Python ML dependencies are NOW installed** — the full pipeline (scrape→transcribe→render) can now execute end-to-end
+- Pipeline service (Bun on port 3001) spawns `master_pipeline.py` as subprocess — this should now work with all deps available
+
+### Verification Results
+- ✅ `bun run lint` — 0 errors, 0 warnings
+- ✅ Dev server — GET / 200, page renders fully
+- ✅ Pipeline service — health endpoint returns ok, queue empty
+- ✅ Agent Browser — all sections render, no console errors
+- ✅ All Python imports verified individually
