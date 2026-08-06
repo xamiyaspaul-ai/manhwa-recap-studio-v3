@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
-import { Search, Loader2, Sparkles, ExternalLink, X, Clock, Bookmark, BookmarkCheck } from "lucide-react";
+import { Search, Loader2, Sparkles, ExternalLink, X, Clock, Bookmark, BookmarkCheck, ArrowUpDown, BookmarkCheckIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -95,6 +95,17 @@ interface SourceCounts {
   anilist: number;
 }
 
+type SortOption = "relevance" | "title-az" | "title-za" | "year-desc" | "year-asc" | "chapters-desc";
+
+const SORT_OPTIONS: { value: SortOption; label: string }[] = [
+  { value: "relevance", label: "Relevance" },
+  { value: "title-az", label: "Title A→Z" },
+  { value: "title-za", label: "Title Z→A" },
+  { value: "year-desc", label: "Newest" },
+  { value: "year-asc", label: "Oldest" },
+  { value: "chapters-desc", label: "Most Chapters" },
+];
+
 const SEARCH_HISTORY_KEY = "manhwa-search-history";
 const MAX_HISTORY = 5;
 
@@ -125,6 +136,7 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
     const [results, setResults] = useState<MangadexManga[]>([]);
     const [sourceCounts, setSourceCounts] = useState<SourceCounts | null>(null);
     const [filter, setFilter] = useState<SourceFilter>("all");
+    const [sortBy, setSortBy] = useState<SortOption>("relevance");
     const [hasSearched, setHasSearched] = useState(false);
     const [searchDuration, setSearchDuration] = useState<number | null>(null);
     const [inputFocused, setInputFocused] = useState(false);
@@ -144,6 +156,7 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
         setQuery("");
         setError(null);
         setFilter("all");
+        setSortBy("relevance");
         setSearchDuration(null);
         onClearResults?.();
       },
@@ -190,6 +203,7 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
       setQuery("");
       setError(null);
       setFilter("all");
+      setSortBy("relevance");
       setSearchDuration(null);
       onClearResults?.();
     }, [onClearResults]);
@@ -237,9 +251,28 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
     }, [query, onResults, addToHistory]);
 
     const visibleResults = useMemo(() => {
-      if (filter === "all") return results;
-      return results.filter((m) => (m.source ?? "mangahere") === filter);
-    }, [results, filter]);
+      let filtered = filter === "all" ? results : results.filter((m) => (m.source ?? "mangahere") === filter);
+      if (sortBy === "relevance") return filtered;
+      const sorted = [...filtered];
+      switch (sortBy) {
+        case "title-az":
+          sorted.sort((a, b) => a.title.localeCompare(b.title));
+          break;
+        case "title-za":
+          sorted.sort((a, b) => b.title.localeCompare(a.title));
+          break;
+        case "year-desc":
+          sorted.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+          break;
+        case "year-asc":
+          sorted.sort((a, b) => (a.year ?? 9999) - (b.year ?? 9999));
+          break;
+        case "chapters-desc":
+          sorted.sort((a, b) => (b.lastChapter ?? 0) - (a.lastChapter ?? 0));
+          break;
+      }
+      return sorted;
+    }, [results, filter, sortBy]);
 
     const activeSourceCount = useMemo(() => {
       if (!sourceCounts) return 0;
@@ -300,10 +333,15 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
 
     const handleBookmark = useCallback((e: React.MouseEvent, m: MangadexManga) => {
       e.stopPropagation();
+      const wasBookmarked = isBookmarked?.(m.id) ?? false;
       onBookmarkToggle?.(m);
       setPoppedBookmark(m.id);
       setTimeout(() => setPoppedBookmark(null), 350);
-    }, [onBookmarkToggle]);
+      toast({
+        title: wasBookmarked ? "Bookmark removed" : "Bookmarked!",
+        description: wasBookmarked ? `Removed "${m.title}" from saved manga` : `Saved "${m.title}" to bookmarks`,
+      });
+    }, [onBookmarkToggle, isBookmarked, toast]);
 
     const showHistory = inputFocused && query === "" && searchHistory.length > 0 && !hasSearched;
 
@@ -335,20 +373,37 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
             />
           </div>
 
-          <div className={`relative text-center space-y-4 transition-all duration-700 ${isVisible ? "animate-section-in" : "opacity-0"}`}>
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight">
-              <span className="text-gradient">Manhwa Recap Studio</span>
+          <div className={`relative text-center space-y-5 transition-all duration-700 ${isVisible ? "animate-section-in" : "opacity-0"}`}>
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-primary/20 bg-primary/5 mb-2">
+              <Sparkles className="h-3.5 w-3.5 text-primary" />
+              <span className="text-[11px] font-semibold uppercase tracking-widest text-primary">AI-Powered Video Pipeline</span>
+            </div>
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-tight">
+              <span className="text-gradient">Manhwa Recap</span>
+              <br />
+              <span className="text-gradient">Studio</span>
             </h1>
             <p className="text-muted-foreground text-base sm:text-lg max-w-2xl mx-auto leading-relaxed">
               Enter any manhwa, manga, or webtoon name. We search{" "}
               <span className="text-foreground font-medium">6 sources at once</span>,
               scrape every chapter, transcribe dialogue with AI, and render a narrated recap video.
             </p>
-            <p className="text-xs text-muted-foreground/50">
-              Press <kbd className="px-1.5 py-0.5 rounded border border-border bg-muted text-foreground/80 font-mono text-[10px]">/</kbd> to focus{" "}
-              <kbd className="px-1.5 py-0.5 rounded border border-border bg-muted text-foreground/80 font-mono text-[10px]">Esc</kbd> to clear{" "}
-              <kbd className="px-1.5 py-0.5 rounded border border-border bg-muted text-foreground/80 font-mono text-[10px]">B</kbd> bookmarks
-            </p>
+            <div className="flex items-center justify-center gap-3 text-xs text-muted-foreground/50">
+              <div className="flex items-center gap-1.5">
+                <kbd className="px-1.5 py-0.5 rounded border border-border bg-muted text-foreground/70 font-mono text-[10px] hover:bg-muted/80 transition-colors cursor-default">/</kbd>
+                <span>focus</span>
+              </div>
+              <span className="text-muted-foreground/20">·</span>
+              <div className="flex items-center gap-1.5">
+                <kbd className="px-1.5 py-0.5 rounded border border-border bg-muted text-foreground/70 font-mono text-[10px] hover:bg-muted/80 transition-colors cursor-default">Esc</kbd>
+                <span>clear</span>
+              </div>
+              <span className="text-muted-foreground/20">·</span>
+              <div className="flex items-center gap-1.5">
+                <kbd className="px-1.5 py-0.5 rounded border border-border bg-muted text-foreground/70 font-mono text-[10px] hover:bg-muted/80 transition-colors cursor-default">B</kbd>
+                <span>bookmarks</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -443,7 +498,7 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
           </div>
         )}
 
-        {/* Source filter row + counts + clear results button */}
+        {/* Source filter row + sort + counts + clear results button */}
         {hasSearched && !loading && results.length > 0 && (
           <div className="flex flex-wrap items-center justify-center gap-1.5 animate-fade-in-up">
             {SOURCE_FILTERS.map((f) => {
@@ -476,6 +531,20 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
                 </Button>
               );
             })}
+            {/* Sort dropdown */}
+            <div className="flex items-center gap-1">
+              <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground/60" />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as SortOption)}
+                className="h-8 px-2 text-xs bg-muted/50 border border-border rounded-lg text-foreground focus:outline-none focus:ring-1 focus:ring-ring appearance-none cursor-pointer pr-6 bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22currentColor%22%20stroke-width%3D%222%22%3E%3Cpath%20d%3D%22m6%209%206%206%206-6%22%2F%3E%3C%2Fsvg%3E')] bg-[position:right_6px_center] bg-no-repeat"
+                aria-label="Sort results"
+              >
+                {SORT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
             <Button
               type="button"
               size="sm"

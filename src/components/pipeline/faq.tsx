@@ -175,16 +175,20 @@ export function FAQ() {
   const { ref, isVisible } = useSectionObserver(0.05);
 
   return (
-    <section ref={ref} className={`max-w-3xl mx-auto space-y-4 transition-all duration-700 ${isVisible ? "animate-section-in" : "opacity-0"}`}>
-      <div className="flex items-center gap-2">
-        <div className="p-1.5 rounded-lg bg-primary/10">
-          <HelpCircle className="h-5 w-5 text-primary" />
+    <section ref={ref} className={`max-w-3xl mx-auto space-y-6 transition-all duration-700 ${isVisible ? "animate-section-in" : "opacity-0"}`}>
+      <div className="text-center">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-primary/20 bg-primary/5 mb-3">
+          <HelpCircle className="h-3.5 w-3.5 text-primary" />
+          <span className="text-[11px] font-semibold uppercase tracking-widest text-primary">
+            FAQ
+          </span>
         </div>
-        <div>
-          <h2 className="text-xl font-bold">Frequently Asked Questions</h2>
-          <p className="text-xs text-muted-foreground/60 mt-0.5">Everything you need to know about the pipeline</p>
-        </div>
+        <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">Frequently Asked Questions</h2>
+        <p className="text-sm text-muted-foreground mt-1.5 max-w-lg mx-auto leading-relaxed">
+          Everything you need to know about the pipeline
+        </p>
       </div>
+
       <div className="space-y-2">
         {FAQ_ITEMS.map((item, i) => {
           const isOpen = openIndex === i;
@@ -193,10 +197,10 @@ export function FAQ() {
             <div
               key={i}
               className={cn(
-                "rounded-lg border bg-card overflow-hidden transition-all duration-300",
+                "rounded-xl border bg-card/60 overflow-hidden transition-all duration-300",
                 isOpen
-                  ? `border-l-2 ${item.borderStyle}`
-                  : "border-border"
+                  ? `border-l-2 ${item.borderStyle} shadow-lg shadow-primary/5 bg-card/90`
+                  : "border-border hover:bg-card/80 hover:border-primary/20"
               )}
             >
               <button
@@ -204,7 +208,12 @@ export function FAQ() {
                 className="w-full flex items-center gap-3 p-4 text-left hover:bg-muted/30 transition-colors"
                 aria-expanded={isOpen}
               >
-                <Icon className={cn("h-4 w-4 flex-shrink-0", item.iconClass)} />
+                <div className={cn(
+                  "p-1.5 rounded-lg transition-colors flex-shrink-0",
+                  isOpen ? "bg-primary/15" : "bg-muted/50"
+                )}>
+                  <Icon className={cn("h-4 w-4", item.iconClass)} />
+                </div>
                 <span className="text-sm font-medium flex-1">{item.question}</span>
                 <ChevronDown
                   className={cn(
@@ -219,7 +228,7 @@ export function FAQ() {
                   isOpen ? "max-h-96 opacity-100" : "max-h-0 opacity-0"
                 )}
               >
-                <div className="px-4 pb-4 text-sm text-muted-foreground leading-relaxed">
+                <div className="px-4 pb-4 pl-12 text-sm text-muted-foreground leading-relaxed">
                   {parseMarkdown(item.answer)}
                 </div>
               </div>

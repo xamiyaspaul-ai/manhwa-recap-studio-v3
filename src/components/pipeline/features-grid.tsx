@@ -10,6 +10,7 @@ import {
   Globe,
   Zap,
   Shield,
+  Grid3X3,
   type LucideIcon,
 } from "lucide-react";
 
@@ -19,6 +20,7 @@ interface Feature {
   desc: string;
   stat: string;
   gradient: string;
+  glowColor: string;
 }
 
 const FEATURES: Feature[] = [
@@ -28,6 +30,7 @@ const FEATURES: Feature[] = [
     desc: "Query 6 manga databases simultaneously — MangaHere, FanFox, Webtoons, AsuraScans, MAL & AniList.",
     stat: "6 Sources",
     gradient: "from-amber-500/20 to-orange-500/10",
+    glowColor: "shadow-amber-500/10",
   },
   {
     icon: ScanLine,
@@ -35,6 +38,7 @@ const FEATURES: Feature[] = [
     desc: "Source-specific scrapers download every panel image from every chapter, deduplicated across mirrors.",
     stat: "Auto Chapter",
     gradient: "from-emerald-500/20 to-teal-500/10",
+    glowColor: "shadow-emerald-500/10",
   },
   {
     icon: Eye,
@@ -42,6 +46,7 @@ const FEATURES: Feature[] = [
     desc: "Vision AI reads speech bubbles and captions from each panel with 3 provider fallback.",
     stat: "3 VLM Providers",
     gradient: "from-sky-500/20 to-blue-500/10",
+    glowColor: "shadow-sky-500/10",
   },
   {
     icon: Scissors,
@@ -49,6 +54,7 @@ const FEATURES: Feature[] = [
     desc: "YOLO + contour analysis finds panel boundaries ensuring each panel stays complete and un-split.",
     stat: "YOLO AI",
     gradient: "from-fuchsia-500/20 to-purple-500/10",
+    glowColor: "shadow-fuchsia-500/10",
   },
   {
     icon: Clapperboard,
@@ -56,6 +62,7 @@ const FEATURES: Feature[] = [
     desc: "Panels voiced with 55+ TTS voices and merged into a single recap MP4 with ffmpeg.",
     stat: "55+ Voices",
     gradient: "from-rose-500/20 to-pink-500/10",
+    glowColor: "shadow-rose-500/10",
   },
   {
     icon: Globe,
@@ -63,6 +70,7 @@ const FEATURES: Feature[] = [
     desc: "Translate from Korean, Japanese, Chinese, Spanish, French, German and more to English.",
     stat: "9+ Languages",
     gradient: "from-teal-500/20 to-cyan-500/10",
+    glowColor: "shadow-teal-500/10",
   },
   {
     icon: Zap,
@@ -70,6 +78,7 @@ const FEATURES: Feature[] = [
     desc: "Optional Groq LPU hardware delivers 3-5x faster VLM transcription and narration rewriting.",
     stat: "3-5x Faster",
     gradient: "from-yellow-500/20 to-amber-500/10",
+    glowColor: "shadow-yellow-500/10",
   },
   {
     icon: Shield,
@@ -77,6 +86,7 @@ const FEATURES: Feature[] = [
     desc: "Open-source stack with no paid requirements. All AI processing uses free-tier APIs.",
     stat: "$0 Cost",
     gradient: "from-lime-500/20 to-green-500/10",
+    glowColor: "shadow-lime-500/10",
   },
 ];
 
@@ -84,17 +94,21 @@ export function FeaturesGrid() {
   const { ref, isVisible } = useSectionObserver(0.1);
 
   return (
-    <section className="max-w-6xl mx-auto py-8">
+    <section className="max-w-6xl mx-auto py-4">
       <div
         ref={ref}
         className={`transition-all duration-700 ${isVisible ? "animate-section-in" : "opacity-0"}`}
       >
         <div className="text-center mb-8">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-            Platform Capabilities
-          </h2>
-          <p className="text-xs text-muted-foreground/60 mt-1">
-            Everything you need for manhwa recap videos
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-primary/20 bg-primary/5 mb-3">
+            <Grid3X3 className="h-3.5 w-3.5 text-primary" />
+            <span className="text-[11px] font-semibold uppercase tracking-widest text-primary">
+              Platform Capabilities
+            </span>
+          </div>
+          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">Everything you need</h2>
+          <p className="text-sm text-muted-foreground mt-1.5 max-w-lg mx-auto leading-relaxed">
+            A complete toolkit for manhwa recap video creation
           </p>
         </div>
 
@@ -104,20 +118,21 @@ export function FeaturesGrid() {
             return (
               <div
                 key={f.title}
-                className={
-                  `group relative p-4 rounded-xl border border-border bg-card/50 hover:border-primary/30 hover:bg-card/80 transition-all duration-300 hover:shadow-lg hover:shadow-primary/5 cursor-default ${isVisible ? "animate-item-in" : "opacity-0"}`
-                }
+                className={`group relative p-5 rounded-2xl border border-border bg-card/40 hover:border-primary/20 hover:bg-card/80 transition-all duration-300 hover:shadow-xl ${f.glowColor} cursor-default ${isVisible ? "animate-item-in" : "opacity-0"}`}
                 style={{ animationDelay: isVisible ? `${i * 80}ms` : "0ms" }}
               >
                 {/* Gradient accent at top */}
-                <div className={`absolute inset-x-0 top-0 h-[2px] rounded-t-xl bg-gradient-to-r ${f.gradient} opacity-0 group-hover:opacity-100 transition-opacity duration-300`} />
+                <div className={`absolute inset-x-0 top-0 h-[2px] rounded-t-2xl bg-gradient-to-r ${f.gradient} opacity-0 group-hover:opacity-100 transition-opacity duration-300`} />
                 
-                <div className="flex items-start gap-3">
-                  <div className="p-2 rounded-lg bg-primary/10 group-hover:bg-primary/20 transition-colors">
+                {/* Inner glow on hover */}
+                <div className={`absolute inset-0 rounded-2xl bg-gradient-to-br ${f.gradient} opacity-0 group-hover:opacity-100 transition-opacity duration-500`} />
+                
+                <div className="relative flex items-start gap-3">
+                  <div className="p-2.5 rounded-xl bg-primary/10 group-hover:bg-primary/20 transition-all duration-300 group-hover:shadow-md group-hover:shadow-primary/10">
                     <Icon className="h-4 w-4 text-primary" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-sm font-semibold mb-1 group-hover:text-primary transition-colors">
+                    <h3 className="text-sm font-bold mb-1.5 group-hover:text-primary transition-colors">
                       {f.title}
                     </h3>
                     <p className="text-xs text-muted-foreground leading-relaxed">
@@ -127,8 +142,8 @@ export function FeaturesGrid() {
                 </div>
 
                 {/* Stat badge */}
-                <div className="mt-3 flex justify-end">
-                  <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-muted/80 text-muted-foreground border border-border">
+                <div className="relative mt-4 flex justify-end">
+                  <span className="text-[10px] font-mono font-medium px-2.5 py-1 rounded-full bg-muted/80 text-muted-foreground border border-border group-hover:border-primary/20 group-hover:text-foreground transition-colors">
                     {f.stat}
                   </span>
                 </div>

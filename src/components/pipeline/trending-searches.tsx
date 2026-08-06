@@ -1,17 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { TrendingUp, Flame, Sparkles } from "lucide-react";
+import { TrendingUp, Flame, Sparkles, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSectionObserver } from "@/hooks/use-section-observer";
 
 const TRENDING = [
-  "Solo Leveling",
-  "Tower of God",
-  "The Beginning After The End",
-  "Omniscient Reader",
-  "Nano Machine",
-  "The Greatest Estate Developer",
+  { title: "Solo Leveling", icon: "⚔️" },
+  { title: "Tower of God", icon: "🗼" },
+  { title: "The Beginning After The End", icon: "✨" },
+  { title: "Omniscient Reader", icon: "📖" },
+  { title: "Nano Machine", icon: "🤖" },
+  { title: "The Greatest Estate Developer", icon: "🏗️" },
 ];
 
 interface TrendingSearchesProps {
@@ -23,53 +23,56 @@ export function TrendingSearches({ onPick }: TrendingSearchesProps) {
   const { ref, isVisible } = useSectionObserver(0.1);
 
   return (
-    <div ref={ref} className={`flex flex-wrap items-center justify-center gap-2 max-w-2xl mx-auto transition-all duration-700 ${isVisible ? "animate-section-in" : "opacity-0"}`}>
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground mr-1">
-        <TrendingUp className="h-3.5 w-3.5 text-primary animate-pulse" />
-        <span className="font-medium">Trending</span>
-      </div>
-      {TRENDING.map((title, i) => {
-        const Icon = i % 2 === 0 ? Flame : Sparkles;
-        return (
-          <button
-            key={title}
-            onClick={() => onPick(title)}
-            onMouseEnter={() => setHovered(i)}
-            onMouseLeave={() => setHovered(null)}
-            className={cn(
-              "group flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border transition-all duration-200 relative",
-              isVisible ? "animate-item-in" : "opacity-0",
-              hovered === i
-                ? "border-primary/40 text-primary scale-105 shadow-sm shadow-primary/10"
-                : "bg-card/50 border-border text-muted-foreground hover:text-foreground"
-            )}
-            style={{ animationDelay: isVisible ? `${i * 60}ms` : "0ms" }}
-          >
-            {/* Rank number */}
-            <span className={cn(
-              "text-[9px] font-mono font-bold w-3.5 h-3.5 rounded-md flex items-center justify-center transition-colors",
-              hovered === i
-                ? "bg-primary text-primary-foreground"
-                : i < 3
-                  ? "bg-primary/15 text-primary"
-                  : "bg-muted text-muted-foreground/60"
-            )}>
-              {i + 1}
+    <section ref={ref} className="max-w-4xl mx-auto">
+      <div className={`transition-all duration-700 ${isVisible ? "animate-section-in" : "opacity-0"}`}>
+        <div className="flex items-center justify-center gap-2 mb-4">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-primary/20 bg-primary/5">
+            <TrendingUp className="h-3.5 w-3.5 text-primary" />
+            <span className="text-[11px] font-semibold uppercase tracking-widest text-primary">
+              Trending Now
             </span>
-            <Icon
-              className={cn(
-                "h-3 w-3 transition-colors",
-                hovered === i ? "text-primary" : "text-muted-foreground/50"
-              )}
-            />
-            <span className="font-medium">{title}</span>
-            {/* Gradient border glow on hover */}
-            {hovered === i && (
-              <span className="absolute inset-0 rounded-full border border-primary/20 animate-glow-border pointer-events-none" />
-            )}
-          </button>
-        );
-      })}
-    </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-2.5">
+          {TRENDING.map((item, i) => {
+            const Icon = i % 2 === 0 ? Flame : Sparkles;
+            return (
+              <button
+                key={item.title}
+                onClick={() => onPick(item.title)}
+                onMouseEnter={() => setHovered(i)}
+                onMouseLeave={() => setHovered(null)}
+                className={cn(
+                  "group flex items-center gap-2 text-xs px-4 py-2 rounded-xl border transition-all duration-200 relative",
+                  isVisible ? "animate-item-in" : "opacity-0",
+                  hovered === i
+                    ? "border-primary/40 text-primary scale-105 shadow-md shadow-primary/10 bg-primary/5"
+                    : "bg-card/50 border-border text-muted-foreground hover:text-foreground hover:bg-card/80 hover:border-primary/20"
+                )}
+                style={{ animationDelay: isVisible ? `${i * 60}ms` : "0ms" }}
+              >
+                {/* Rank number */}
+                <span className={cn(
+                  "text-[9px] font-mono font-bold w-5 h-5 rounded-md flex items-center justify-center transition-all duration-200",
+                  hovered === i
+                    ? "bg-primary text-primary-foreground scale-110"
+                    : i < 3
+                      ? "bg-primary/15 text-primary"
+                      : "bg-muted text-muted-foreground/60"
+                )}>
+                  {i + 1}
+                </span>
+                <span className="text-sm">{item.icon}</span>
+                <span className="font-medium">{item.title}</span>
+                {/* Gradient border glow on hover */}
+                {hovered === i && (
+                  <span className="absolute inset-0 rounded-xl border border-primary/20 animate-glow-border pointer-events-none" />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </section>
   );
 }

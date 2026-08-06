@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
-import { Github, Zap, Keyboard, ChevronUp, Sun, Moon, Heart, Twitter } from "lucide-react";
+import { Github, Zap, Keyboard, ChevronUp, Sun, Moon, Heart, Twitter, Bell } from "lucide-react";
 import { useTheme } from "next-themes";
 import {
   Popover,
@@ -22,6 +22,7 @@ import { SettingsDialog } from "@/components/pipeline/settings-dialog";
 import { FeaturesGrid } from "@/components/pipeline/features-grid";
 import { BookmarksSection } from "@/components/pipeline/bookmarks-section";
 import { OnboardingTour } from "@/components/pipeline/onboarding-tour";
+import { Testimonials } from "@/components/pipeline/testimonials";
 import { useJobProgress } from "@/hooks/use-job-progress";
 import { useScrollProgress } from "@/hooks/use-section-observer";
 import { useBookmarks } from "@/hooks/use-bookmarks";
@@ -164,8 +165,8 @@ export default function Home() {
         </div>
 
         <div className="max-w-6xl mx-auto flex items-center justify-between px-4 py-3">
-          <button onClick={handleNewJob} className="flex items-center gap-2 group">
-            <div className="p-1.5 rounded-md bg-primary/10 group-hover:bg-primary/20 transition-all duration-300 group-hover:shadow-md group-hover:shadow-primary/10">
+          <button onClick={handleNewJob} className="flex items-center gap-2.5 group">
+            <div className="p-1.5 rounded-lg bg-primary/10 group-hover:bg-primary/20 transition-all duration-300 group-hover:shadow-md group-hover:shadow-primary/10">
               <Zap className="h-5 w-5 text-primary" />
             </div>
             <div className="flex items-center gap-2">
@@ -246,7 +247,7 @@ export default function Home() {
       {/* Main */}
       <main ref={mainRef} className="flex-1 overflow-y-auto px-4 py-8 sm:py-12">
         {view === "search" && (
-          <div className="space-y-10">
+          <div className="space-y-12 max-w-6xl mx-auto">
             <StatsBar />
             <SearchSection
               ref={searchSectionRef}
@@ -257,6 +258,7 @@ export default function Home() {
               isBookmarked={isBookmarked}
               onBookmarkToggle={handleBookmarkToggle}
             />
+
             <Separator className="max-w-4xl mx-auto opacity-30" />
 
             {/* Bookmarks toggle + section */}
@@ -265,12 +267,25 @@ export default function Home() {
             )}
 
             <TrendingSearches onPick={handleTrendingPick} />
+
+            <Separator className="max-w-4xl mx-auto opacity-30" />
+
             <HowItWorks />
+
             <Separator className="max-w-4xl mx-auto opacity-30" />
+
             <FeaturesGrid />
+
             <Separator className="max-w-4xl mx-auto opacity-30" />
+
+            <Testimonials />
+
+            <Separator className="max-w-4xl mx-auto opacity-30" />
+
             <JobHistory onSelectJob={handleSelectHistoryJob} refreshKey={historyRefresh} />
+
             <Separator className="max-w-4xl mx-auto opacity-30" />
+
             <FAQ />
           </div>
         )}
@@ -312,8 +327,8 @@ export default function Home() {
         <div className="max-w-6xl mx-auto px-4 py-8 space-y-5">
           {/* Brand section */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <div className="p-1.5 rounded-md bg-primary/10">
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 rounded-lg bg-primary/10">
                 <Zap className="h-4 w-4 text-primary" />
               </div>
               <span className="font-bold text-sm">Manhwa Recap Studio</span>
