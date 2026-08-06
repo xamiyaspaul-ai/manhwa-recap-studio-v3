@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Film, BookOpen, ImageIcon, CheckCircle2, Cloud, Sparkles } from "lucide-react";
+import { Film, BookOpen, ImageIcon, CheckCircle2, Cloud, Sparkles, Clock, Play, Zap, Users, Database, Search } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 interface Stats {
@@ -12,7 +12,21 @@ interface Stats {
   archivedJobs?: number;
 }
 
-/** Animated counter that counts from 0 to target value on mount */
+interface PlatformStat {
+  icon: typeof Film;
+  label: string;
+  value: string;
+  color: string;
+  barColor: string;
+}
+
+const PLATFORM_STATS: PlatformStat[] = [
+  { icon: Search, label: "Sources", value: "6", color: "text-amber-400", barColor: "bg-amber-400" },
+  { icon: Zap, label: "TTS Voices", value: "55+", color: "text-emerald-400", barColor: "bg-emerald-400" },
+  { icon: Users, label: "Languages", value: "9+", color: "text-sky-400", barColor: "bg-sky-400" },
+  { icon: Database, label: "API Providers", value: "3", color: "text-fuchsia-400", barColor: "bg-fuchsia-400" },
+];
+
 function AnimatedCounter({ target, duration = 1200 }: { target: number; duration?: number }) {
   const [display, setDisplay] = useState(0);
   const rafRef = useRef<number>(0);
@@ -20,13 +34,10 @@ function AnimatedCounter({ target, duration = 1200 }: { target: number; duration
   const prevTargetRef = useRef<number>(0);
 
   useEffect(() => {
-    // Reset when target changes
     if (target !== prevTargetRef.current) {
       prevTargetRef.current = target;
       startTimeRef.current = null;
-      // Kick off animation from 0
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
-
       const tick = (timestamp: number) => {
         if (startTimeRef.current === null) startTimeRef.current = timestamp;
         const elapsed = timestamp - startTimeRef.current;
@@ -40,16 +51,35 @@ function AnimatedCounter({ target, duration = 1200 }: { target: number; duration
           setDisplay(target);
         }
       };
-
       rafRef.current = requestAnimationFrame(tick);
     }
-
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
   }, [target, duration]);
 
   return <span>{display.toLocaleString()}</span>;
+}
+
+function StatCard({ item }: { item: PlatformStat }) {
+  const Icon = item.icon;
+  return (
+    <div className="relative flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-card/60 border border-border overflow-hidden group hover:border-primary/20 hover:bg-card/90 transition-all duration-300">
+      <div
+        className={`absolute inset-y-0 left-0 ${item.barColor} opacity-[0.06] transition-all duration-1000 group-hover:opacity-[0.12]`}
+        style={{ width: "100%" }}
+      />
+      <div className="relative flex items-center gap-2.5">
+        <div className="p-1.5 rounded-lg bg-primary/8 group-hover:bg-primary/15 transition-colors">
+          <Icon className={`h-3.5 w-3.5 ${item.color}`} />
+        </div>
+        <div className="flex flex-col">
+          <span className="text-sm font-bold tabular-nums leading-none">{item.value}</span>
+          <span className="text-[10px] text-muted-foreground/70 leading-tight mt-0.5">{item.label}</span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function StatsBar() {
@@ -66,83 +96,65 @@ export function StatsBar() {
       .finally(() => setLoading(false));
   }, []);
 
-  // Shimmer loading skeleton while fetching
   if (loading) {
     return (
-      <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-6 py-4">
-        {[1, 2, 3, 4].map((n) => (
-          <div
-            key={n}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-card/50"
-          >
-            <Skeleton className="h-4 w-4 rounded" />
-            <Skeleton className="h-4 w-8 rounded" />
-            <Skeleton className="h-3 w-16 rounded hidden sm:block" />
+      <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 py-3">
+        {PLATFORM_STATS.map((s) => (
+          <div key={s.label} className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl border border-border bg-card/40">
+            <Skeleton className="h-3.5 w-3.5 rounded-lg" />
+            <div className="space-y-1">
+              <Skeleton className="h-4 w-8 rounded" />
+              <Skeleton className="h-2.5 w-14 rounded" />
+            </div>
           </div>
         ))}
       </div>
     );
   }
 
-  // Welcome message when no jobs exist
+  // Platform stats when no jobs
   if (!stats || stats.totalJobs === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-6 space-y-2 animate-fade-in-up">
-        <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border bg-card/30">
-          <Sparkles className="h-4 w-4 text-primary/60" />
-          <p className="text-sm text-muted-foreground">
-            No videos created yet —{" "}
-            <span className="text-foreground/80 font-medium">search for a manhwa above</span>{" "}
-            to get started!
-          </p>
+      <div className="flex flex-col items-center gap-3 animate-fade-in-up">
+        <div className="flex items-center gap-2 px-4 py-2 rounded-xl border border-primary/20 bg-primary/5">
+          <Sparkles className="h-3.5 w-3.5 text-primary" />
+          <p className="text-xs text-primary font-medium">Platform Ready</p>
+          <span className="text-muted-foreground/30">·</span>
+          <span className="text-xs text-muted-foreground">Search a manhwa to create your first video</span>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-3">
+          {PLATFORM_STATS.map((item) => (
+            <StatCard key={item.label} item={item} />
+          ))}
         </div>
       </div>
     );
   }
 
-  const items = [
-    { icon: Film, label: "Videos Created", value: stats.completedJobs, color: "text-emerald-400" },
-    { icon: BookOpen, label: "Jobs Total", value: stats.totalJobs, color: "text-sky-400" },
-    { icon: CheckCircle2, label: "Chapters Processed", value: stats.totalChapters, color: "text-amber-400" },
-    { icon: ImageIcon, label: "Images Scraped", value: stats.totalImages, color: "text-fuchsia-400" },
+  const jobItems: PlatformStat[] = [
+    { icon: Film, label: "Videos", value: String(stats.completedJobs), color: "text-emerald-400", barColor: "bg-emerald-400" },
+    { icon: Play, label: "Jobs", value: String(stats.totalJobs), color: "text-sky-400", barColor: "bg-sky-400" },
+    { icon: ImageIcon, label: "Images", value: stats.totalImages.toLocaleString(), color: "text-amber-400", barColor: "bg-amber-400" },
+    { icon: Clock, label: "In Progress", value: String(stats.totalJobs - stats.completedJobs), color: "text-fuchsia-400", barColor: "bg-fuchsia-400" },
   ];
 
   if (stats.archivedJobs && stats.archivedJobs > 0) {
-    items.push({ icon: Cloud, label: "Cloud Archived", value: stats.archivedJobs, color: "text-sky-400" });
+    jobItems.push({ icon: Cloud, label: "Archived", value: String(stats.archivedJobs), color: "text-sky-400", barColor: "bg-sky-400" });
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-6 py-4 animate-fade-in-up">
-      {items.map((item) => {
-        const Icon = item.icon;
-        const maxVal = stats.totalJobs > 0 ? stats.totalJobs : 1;
-        const pct = Math.min(100, Math.round((item.value / maxVal) * 100));
-        // Extract tailwind color from text-* class for the bar background
-        const barColor = item.color
-          .replace("text-emerald-400", "bg-emerald-400")
-          .replace("text-sky-400", "bg-sky-400")
-          .replace("text-amber-400", "bg-amber-400")
-          .replace("text-fuchsia-400", "bg-fuchsia-400");
-        return (
-          <div
-            key={item.label}
-            className="relative flex items-center gap-2 px-3 py-1.5 rounded-lg bg-card/50 border border-border overflow-hidden"
-          >
-            {/* Mini sparkline bar behind content */}
-            <div
-              className={`absolute inset-y-0 left-0 ${barColor} opacity-[0.07] transition-all duration-1000`}
-              style={{ width: `${pct}%` }}
-            />
-            <div className="relative flex items-center gap-2">
-              <Icon className={`h-4 w-4 ${item.color}`} />
-              <span className="text-sm font-semibold tabular-nums">
-                <AnimatedCounter target={item.value} />
-              </span>
-              <span className="text-xs text-muted-foreground hidden sm:inline">{item.label}</span>
-            </div>
-          </div>
-        );
-      })}
+    <div className="flex flex-col items-center gap-3 animate-fade-in-up">
+      <div className="flex items-center gap-2 px-4 py-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5">
+        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+        <p className="text-xs text-emerald-400 font-medium">
+          {stats.completedJobs} video{stats.completedJobs !== 1 ? "s" : ""} created · {stats.totalImages.toLocaleString()} images processed
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-3">
+        {jobItems.map((item) => (
+          <StatCard key={item.label} item={item} />
+        ))}
+      </div>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
-import { Github, Zap, Keyboard, ChevronUp, Sun, Moon, Heart, Twitter, Bell } from "lucide-react";
+import { Github, Zap, Keyboard, ChevronUp, Sun, Moon, Heart, ArrowRight, Sparkles, Bell } from "lucide-react";
 import { useTheme } from "next-themes";
 import {
   Popover,
@@ -23,6 +23,7 @@ import { FeaturesGrid } from "@/components/pipeline/features-grid";
 import { BookmarksSection } from "@/components/pipeline/bookmarks-section";
 import { OnboardingTour } from "@/components/pipeline/onboarding-tour";
 import { Testimonials } from "@/components/pipeline/testimonials";
+import { ActivityFeed } from "@/components/pipeline/activity-feed";
 import { useJobProgress } from "@/hooks/use-job-progress";
 import { useScrollProgress } from "@/hooks/use-section-observer";
 import { useBookmarks } from "@/hooks/use-bookmarks";
@@ -287,6 +288,10 @@ export default function Home() {
             <Separator className="max-w-4xl mx-auto opacity-30" />
 
             <FAQ />
+
+            <Separator className="max-w-4xl mx-auto opacity-30" />
+
+            <ActivityFeed />
           </div>
         )}
 
@@ -315,12 +320,60 @@ export default function Home() {
       >
         <button
           onClick={scrollToTop}
-          className="p-2.5 rounded-full bg-primary/90 text-primary-foreground shadow-lg hover:bg-primary hover:shadow-xl hover:shadow-primary/20 transition-all active:scale-95"
+          className="p-2.5 rounded-full bg-primary/90 text-primary-foreground shadow-lg hover:bg-primary hover:shadow-xl hover:shadow-primary/20 transition-all active:scale-95 group"
           aria-label="Back to top"
         >
           <ChevronUp className="h-5 w-5" />
         </button>
       </div>
+
+      {/* CTA Section */}
+      {view === "search" && (
+        <div className="border-t border-border">
+          <div className="max-w-6xl mx-auto px-4 py-12 sm:py-16">
+            <div className="flex flex-col lg:flex-row items-center justify-between gap-8">
+              <div className="space-y-3">
+                <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">Ready to create your<br /><span className="text-gradient">first recap video?</span></h2>
+                <p className="text-sm text-muted-foreground max-w-md leading-relaxed">
+                  Search for any manhwa, configure your preferences, and let the AI pipeline handle the rest. It takes about 6 minutes per chapter.
+                </p>
+              </div>
+              <div className="flex flex-col sm:flex-row items-center gap-3">
+                <button
+                  onClick={() => {
+                    const input = document.getElementById("search-input") as HTMLInputElement | null;
+                    if (input) {
+                    input.focus();
+                    input.scrollIntoView({ behavior: "smooth", block: "center" });
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-primary text-primary-foreground font-semibold hover:bg-primary/90 shadow-lg hover:shadow-xl hover:shadow-primary/20 transition-all active:scale-95"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  Get Started
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => {
+                    const input = document.getElementById("search-input") as HTMLInputElement | null;
+                    if (input) {
+                      input.value = "Solo Leveling";
+                      input.dispatchEvent(new Event("input", { bubbles: true }));
+                      input.focus();
+                      const form = input.closest("form");
+                      if (form) form.requestSubmit();
+                      input.scrollIntoView({ behavior: "smooth", block: "center" });
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 px-5 py-3 rounded-xl border border-primary/30 text-primary hover:bg-primary/5 transition-all"
+                >
+                  Try Demo
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="mt-auto border-t border-border bg-background/50">
