@@ -213,7 +213,7 @@ export default function Home() {
       <OnboardingTour />
 
       {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-border glass">
+      <header className="sticky top-0 z-40 glass backdrop-blur-strong relative shadow-[0_4px_30px_-10px_oklch(0.78_0.17_65/0.08)]">
         {/* Scroll progress bar */}
         <div className="absolute inset-x-0 top-0 h-[2px]">
           <div
@@ -228,7 +228,7 @@ export default function Home() {
         </div>
 
         <div className="max-w-6xl mx-auto flex items-center justify-between px-4 py-3">
-          <button onClick={handleNewJob} className="flex items-center gap-2.5 group">
+          <button onClick={handleNewJob} className="flex items-center gap-2.5 group hover-glow-sm rounded-lg -m-1 p-1">
             <div className="p-1.5 rounded-lg bg-primary/10 group-hover:bg-primary/20 transition-all duration-300 group-hover:shadow-md group-hover:shadow-primary/10">
               <Zap className="h-5 w-5 text-primary" />
             </div>
@@ -308,6 +308,13 @@ export default function Home() {
             </a>
           </div>
         </div>
+
+        <div
+          className="absolute bottom-0 inset-x-0 h-px"
+          style={{
+            background: "linear-gradient(90deg, transparent, oklch(0.78 0.17 65 / 0.4), oklch(0.72 0.18 45 / 0.3), transparent)",
+          }}
+        />
       </header>
 
       {/* Main */}

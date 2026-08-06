@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useCallback, useMemo, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
-import { Search, Loader2, Sparkles, ExternalLink, X, Clock, Bookmark, BookmarkCheck, ArrowUpDown, BookmarkCheckIcon, History } from "lucide-react";
+import { Search, Loader2, Sparkles, ExternalLink, X, Clock, Bookmark, BookmarkCheck, ArrowUpDown, BookmarkCheckIcon, History, Heart, Info } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { useSectionObserver } from "@/hooks/use-section-observer";
 import { useSearchHistory } from "@/hooks/use-search-history";
 import { cn } from "@/lib/utils";
+import { MangaDetailCard } from "@/components/pipeline/manga-detail-card";
 import type { MangadexManga, MangaSource } from "@/types/pipeline";
 
 interface SearchSectionProps {
@@ -138,6 +139,7 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
     const [inputFocused, setInputFocused] = useState(false);
     const [poppedBookmark, setPoppedBookmark] = useState<string | null>(null);
     const [focusedResultIdx, setFocusedResultIdx] = useState(-1);
+    const [expandedManga, setExpandedManga] = useState<MangadexManga | null>(null);
     const searchStartTime = useRef<number>(0);
     const historyPanelRef = useRef<HTMLDivElement>(null);
     const resultsGridRef = useRef<HTMLDivElement>(null);
@@ -166,6 +168,7 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
         setFilter("all");
         setSortBy("relevance");
         setSearchDuration(null);
+        setExpandedManga(null);
         onClearResults?.();
       },
     }), [onClearResults]);
@@ -189,6 +192,7 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
       setFilter("all");
       setSortBy("relevance");
       setSearchDuration(null);
+      setExpandedManga(null);
       onClearResults?.();
     }, [onClearResults]);
 
@@ -198,6 +202,7 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
       setLoading(true);
       setError(null);
       setHasSearched(true);
+      setExpandedManga(null);
       searchStartTime.current = performance.now();
 
       try {
@@ -694,19 +699,22 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
                     }
                   }}
                   className={cn(
-                    "group text-left space-y-2 transition-all duration-300 hover:scale-[1.03] hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-ring rounded-lg disabled:opacity-60 disabled:hover:scale-100 cursor-pointer animate-item-in",
+                    "group text-left space-y-2 transition-all duration-300 hover:scale-[1.03] hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-ring rounded-lg disabled:opacity-60 disabled:hover:scale-100 cursor-pointer animate-item-in hover-glow-sm",
                     focusedResultIdx === idx && "ring-2 ring-primary/60 bg-accent/30 scale-[1.03] -translate-y-1"
                   )}
                   style={{ animationDelay: `${idx * 40}ms` }}
                 >
                   <div className="aspect-[3/4] rounded-xl overflow-hidden bg-muted border border-border relative group-hover:border-primary/40 group-hover:shadow-lg group-hover:shadow-primary/5 transition-all duration-300">
                     {m.coverUrl ? (
-                      <img
-                        src={m.coverUrl}
-                        alt={m.title}
-                        className="w-full h-full object-cover group-hover:scale-110 group-hover:brightness-110 transition-all duration-500"
-                        loading="lazy"
-                      />
+                      <>
+                        <img
+                          src={m.coverUrl}
+                          alt={m.title}
+                          className="w-full h-full object-cover group-hover:scale-105 group-hover:brightness-110 transition-all duration-500"
+                          loading="lazy"
+                        />
+                        <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/50 to-transparent pointer-events-none" />
+                      </>
                     ) : (
                       <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground p-2 text-center gap-1">
                         <Search className="h-6 w-6 opacity-30" />
@@ -724,6 +732,16 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
                       className={`absolute top-1.5 right-1.5 h-2 w-2 rounded-full ${CONTENT_RATING_CLASSES[contentRating] ?? "bg-emerald-500"}`}
                       title={CONTENT_RATING_LABEL[contentRating] ?? contentRating}
                     />
+                    {bookmarked && (
+                      <span className="absolute top-1.5 right-7 flex items-center justify-center">
+                        <Heart className="h-3 w-3 text-rose-400 fill-rose-400 drop-shadow-sm" />
+                      </span>
+                    )}
+                    {m.lastChapter && (
+                      <span className="absolute bottom-1.5 left-1.5 text-[9px] font-semibold px-1.5 py-0.5 rounded-md bg-black/60 backdrop-blur-sm text-white/90 border border-white/10">
+                        Ch.{m.lastChapter}
+                      </span>
+                    )}
                     {/* Bookmark button */}
                     <button
                       type="button"
@@ -748,7 +766,6 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
                     )}
                     {/* Hover overlay */}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-300 flex flex-col items-end justify-between p-2">
-                      {/* Genre tags at top */}
                       <div className="flex flex-wrap gap-1 justify-end">
                         {genreTags.map((tag) => (
                           <span key={tag} className="text-[9px] px-1.5 py-0.5 rounded-md bg-black/40 backdrop-blur-sm text-white/80 border border-white/10">
@@ -756,13 +773,24 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
                           </span>
                         ))}
                       </div>
-                      <span className="text-white text-xs font-medium">
-                        {isResolving
-                          ? "Finding on MangaHere…"
-                          : isExternal
-                            ? "Match on MangaDex →"
-                            : "Select →"}
-                      </span>
+                      <div className="flex items-center gap-2 w-full justify-between">
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setExpandedManga(m); }}
+                          className="flex items-center gap-1 text-[10px] text-white/70 hover:text-white px-1.5 py-0.5 rounded-md bg-white/10 backdrop-blur-sm hover:bg-white/20 transition z-20"
+                          aria-label={`Show details for ${m.title}`}
+                        >
+                          <Info className="h-3 w-3" />
+                          Info
+                        </button>
+                        <span className="text-white text-xs font-medium">
+                          {isResolving
+                            ? "Finding on MangaHere…"
+                            : isExternal
+                              ? "Match on MangaDex →"
+                              : "Select →"}
+                        </span>
+                      </div>
                     </div>
                   </div>
                   <div className="space-y-1">
@@ -799,6 +827,25 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
             — metadata-only results (MAL/AniList) are auto-matched to a scrapeable source on selection.
           </p>
         )}
+
+        <MangaDetailCard
+          manga={expandedManga}
+          open={expandedManga !== null}
+          onClose={() => setExpandedManga(null)}
+          onSelect={(m) => { setExpandedManga(null); handleSelect(m); }}
+          isBookmarked={expandedManga ? (isBookmarked?.(expandedManga.id) ?? false) : false}
+          onBookmarkToggle={expandedManga ? () => {
+            const m = expandedManga;
+            const wasBookmarked = isBookmarked?.(m.id) ?? false;
+            onBookmarkToggle?.(m);
+            setPoppedBookmark(m.id);
+            setTimeout(() => setPoppedBookmark(null), 350);
+            toast({
+              title: wasBookmarked ? "Bookmark removed" : "Bookmarked!",
+              description: wasBookmarked ? `Removed "${m.title}" from saved manga` : `Saved "${m.title}" to bookmarks`,
+            });
+          } : undefined}
+        />
       </section>
     );
   }

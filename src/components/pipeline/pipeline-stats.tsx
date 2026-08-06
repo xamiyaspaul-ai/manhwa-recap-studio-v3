@@ -195,7 +195,7 @@ export function PipelineStats() {
 
         {/* Status Distribution Bar */}
         <div
-          className={`rounded-xl bg-card/60 border border-border p-4 mb-4 ${
+          className={`rounded-xl bg-gradient-to-br from-card/60 via-primary/[0.03] to-card/60 border border-border p-4 mb-4 hover-glow-sm ${
             isVisible ? "animate-item-in" : "opacity-0"
           }`}
           style={{ animationDelay: isVisible ? "80ms" : "0ms" }}
@@ -207,14 +207,14 @@ export function PipelineStats() {
             </span>
           </div>
           {/* Stacked bar */}
-          <div className="flex h-3 rounded-full overflow-hidden bg-muted/50">
+          <div className="flex h-3 rounded-full overflow-hidden bg-muted/50 shadow-[inset_0_1px_2px_oklch(0_0_0/0.2)]">
             {barSegments.map((seg) => {
               if (seg.count === 0) return null;
               const pct = (seg.count / total) * 100;
               return (
                 <div
                   key={seg.key}
-                  className={`${seg.color} transition-all duration-700`}
+                  className={`${seg.color} transition-all duration-700 shadow-[inset_0_1px_0_oklch(1/0.2),inset_0_-1px_0_oklch(0/0.15)]`}
                   style={{ width: `${pct}%` }}
                   title={`${STATUS_BAR_COLORS[seg.key].label}: ${seg.count}`}
                 />
@@ -285,11 +285,17 @@ export function PipelineStats() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
           {/* Success Rate */}
           <div
-            className={`rounded-xl bg-card/60 border border-border p-4 hover:border-primary/20 transition-all duration-300 ${
+            className={`rounded-xl bg-card/60 border border-border p-4 hover:border-primary/20 transition-all duration-300 hover-lift hover-glow-sm relative ${
               isVisible ? "animate-item-in" : "opacity-0"
             }`}
             style={{ animationDelay: isVisible ? "480ms" : "0ms" }}
           >
+            <div
+              className="absolute top-0 inset-x-0 h-px rounded-t-xl"
+              style={{
+                background: "linear-gradient(90deg, transparent, oklch(0.78 0.17 65 / 0.3), transparent)",
+              }}
+            />
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-lg bg-emerald-500/10">
@@ -299,7 +305,7 @@ export function PipelineStats() {
                   <p className="text-xs text-muted-foreground">
                     Success Rate
                   </p>
-                  <p className="text-lg font-bold">
+                  <p className="text-lg font-bold animate-count-pulse">
                     {nonActiveJobs.length > 0
                       ? `${successRate}%`
                       : "—"}{" "}
@@ -313,6 +319,11 @@ export function PipelineStats() {
               {nonActiveJobs.length > 0 && (
                 <div className="relative h-10 w-10">
                   <svg className="h-10 w-10 -rotate-90" viewBox="0 0 36 36">
+                    <defs>
+                      <filter id="ring-glow">
+                        <feDropShadow dx="0" dy="0" stdDeviation="1.5" flood-color="oklch(0.7 0.2 160 / 0.5)" />
+                      </filter>
+                    </defs>
                     <circle
                       cx="18"
                       cy="18"
@@ -332,6 +343,7 @@ export function PipelineStats() {
                       strokeDasharray={`${(successRate / 100) * 97.4} 97.4`}
                       strokeLinecap="round"
                       className="text-emerald-500"
+                      filter="url(#ring-glow)"
                     />
                   </svg>
                   <span className="absolute inset-0 flex items-center justify-center text-[9px] font-bold">
@@ -344,11 +356,17 @@ export function PipelineStats() {
 
           {/* Most Used Voice */}
           <div
-            className={`rounded-xl bg-card/60 border border-border p-4 hover:border-primary/20 transition-all duration-300 ${
+            className={`rounded-xl bg-card/60 border border-border p-4 hover:border-primary/20 transition-all duration-300 hover-lift hover-glow-sm relative ${
               isVisible ? "animate-item-in" : "opacity-0"
             }`}
             style={{ animationDelay: isVisible ? "560ms" : "0ms" }}
           >
+            <div
+              className="absolute top-0 inset-x-0 h-px rounded-t-xl"
+              style={{
+                background: "linear-gradient(90deg, transparent, oklch(0.78 0.17 65 / 0.3), transparent)",
+              }}
+            />
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-lg bg-primary/10">
                 <Mic className="h-4 w-4 text-primary" />
@@ -357,7 +375,7 @@ export function PipelineStats() {
                 <p className="text-xs text-muted-foreground">
                   Most Used Voice
                 </p>
-                <p className="text-lg font-bold">
+                <p className="text-lg font-bold animate-count-pulse">
                   {topVoice
                     ? topVoice.charAt(0).toUpperCase() + topVoice.slice(1)
                     : "—"}
@@ -369,11 +387,17 @@ export function PipelineStats() {
 
         {/* Recent Activity */}
         <div
-          className={`rounded-xl bg-card/60 border border-border p-4 hover:border-primary/20 transition-all duration-300 ${
+          className={`rounded-xl bg-card/60 border border-border p-4 hover:border-primary/20 transition-all duration-300 hover-glow-sm relative ${
             isVisible ? "animate-item-in" : "opacity-0"
           }`}
           style={{ animationDelay: isVisible ? "640ms" : "0ms" }}
         >
+          <div
+            className="absolute top-0 inset-x-0 h-px rounded-t-xl"
+            style={{
+              background: "linear-gradient(90deg, transparent, oklch(0.78 0.17 65 / 0.3), transparent)",
+            }}
+          />
           <div className="flex items-center gap-2 mb-3">
             <Activity className="h-3.5 w-3.5 text-primary" />
             <h3 className="text-sm font-semibold">Recent Activity</h3>
@@ -430,18 +454,24 @@ function StatCard({
 }) {
   return (
     <div
-      className={`rounded-xl bg-card/60 border border-border p-4 hover:border-primary/20 transition-all duration-300 group ${
+      className={`rounded-xl bg-card/60 border border-border p-4 hover:border-primary/20 transition-all duration-300 group hover-glow-sm relative ${
         isVisible ? "animate-item-in" : "opacity-0"
       }`}
       style={{ animationDelay: isVisible ? `${delay}ms` : "0ms" }}
     >
+      <div
+        className="absolute top-0 inset-x-0 h-px rounded-t-xl"
+        style={{
+          background: "linear-gradient(90deg, transparent, oklch(0.78 0.17 65 / 0.3), transparent)",
+        }}
+      />
       <div className="flex items-center gap-2.5 mb-2">
         <div className="p-1.5 rounded-lg bg-primary/10 group-hover:bg-primary/20 transition-colors">
           <Icon className="h-3.5 w-3.5 text-primary" />
         </div>
         <span className="text-xs text-muted-foreground">{label}</span>
       </div>
-      <p className="text-xl font-bold tracking-tight">{value}</p>
+      <p className="text-xl font-bold tracking-tight animate-count-pulse">{value}</p>
     </div>
   );
 }

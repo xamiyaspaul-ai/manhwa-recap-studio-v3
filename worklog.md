@@ -361,3 +361,58 @@
 5. **[MEDIUM] Manga detail page** — Show manga info, cover, tags, description when searching (expandable card)
 6. **[LOW] Accessibility audit** — Full keyboard navigation, ARIA labels, screen reader testing
 7. **[LOW] Export/share functionality** — Share recap video links, export job configs as JSON
+
+---
+## Round 10 — Cron Cycle (2026-08-07)
+
+### Current Project Status Assessment
+- **Cycle**: Round 10 (Cron-triggered review & development cycle)
+- **Dev Server**: Next.js 16.1.3 (Turbopack) — port 3000, compiles successfully, GET / 200
+- **Lint**: 0 errors, 0 warnings
+- **Database**: SQLite (Prisma ORM) — unchanged
+- **Pipeline Service**: Still NOT running (ML deps not available in sandbox)
+- **Component Count**: 27 pipeline components (2 new), 7 hooks
+
+### Completed Modifications (Round 10)
+
+#### [Mandatory] Styling Improvements (Task 10-a) ✅
+1. **pipeline-stats.tsx** — Status bar gradient bg, hover-glow-sm, inset shadows on bar segments, amber gradient top-lines on all cards, animate-count-pulse on stat values, SVG ring feDropShadow emerald glow, hover-lift on success/voice cards
+2. **search-section.tsx** — hover-glow-sm on cards, cover scale-105, permanent bottom gradient overlay, chapters badge on cover, filled heart for bookmarked manga
+3. **page.tsx** — Header: backdrop-blur-strong, amber bottom glow shadow, 1px amber gradient glow line, logo hover-glow-sm
+4. **globals.css** — @media (prefers-reduced-motion: reduce) accessibility block
+
+#### [Mandatory] New Features (Task 10-b) ✅
+1. **Job Detail Modal** (`job-detail-modal.tsx`) — Full job details in modal with 2-col grid, progress bars, chapter breakdown table. Click job row to open, chevron for live progress.
+2. **Manga Detail Expandable Card** (`manga-detail-card.tsx`) — Info button on search cards expands detail panel below grid with cover, tags, description, languages, select/bookmark.
+
+#### Lint Fixes ✅
+- Fixed JSX fragment error in search-section.tsx (two siblings in ternary without wrapper — added Fragment)
+
+### Verification Results
+- ✅ `bun run lint` — 0 errors, 0 warnings
+- ✅ Dev server compiles page successfully — GET / 200
+- ✅ React 19 strict-mode compliance verified
+
+### Updated Component Count
+- **27 pipeline components** (was 25): +job-detail-modal.tsx, +manga-detail-card.tsx
+- **7 hooks** (unchanged)
+
+---
+## Unresolved Issues & Next-Phase Recommendations
+
+### Known Issues
+1. **Dev Server Stability**: Intermittent OOM kills in sandbox. Mitigated with background restart.
+2. **Caddy Proxy 502**: Dev server works directly on port 3000.
+3. **Pipeline Service Not Running**: ML deps not in sandbox.
+4. **React 19 Lint Strictness**: render-time patterns required; refs only in effects/callbacks.
+5. **Turbopack JSX Comment Quirk**: No JSX comments in map callbacks.
+6. **JSX Fragment Rule**: Multiple siblings in ternary branches must be wrapped in Fragment.
+
+### Recommended Next-Phase Priorities
+1. **[HIGH] Real-time stats polling** — Poll /api/stats every 10s in PipelineStats
+2. **[HIGH] Export job configs as JSON** — Share/import job configurations
+3. **[MEDIUM] PWA support** — Service worker + manifest
+4. **[MEDIUM] Accessibility audit** — Full keyboard nav, ARIA labels
+5. **[MEDIUM] Search result filtering/sorting** — Filter by source, status, year
+6. **[LOW] Video player component** — Embed video player for completed outputs
+7. **[LOW] Batch operations on jobs** — Select multiple jobs for bulk delete/retry

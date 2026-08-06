@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useSectionObserver } from "@/hooks/use-section-observer";
 import { JobComparison } from "@/components/pipeline/job-comparison";
+import { JobDetailModal } from "@/components/pipeline/job-detail-modal";
 import type { JobSummary, JobStatus } from "@/types/pipeline";
 
 interface JobHistoryProps {
@@ -100,6 +101,7 @@ export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [detailJob, setDetailJob] = useState<JobSummary | null>(null);
   const { ref, isVisible } = useSectionObserver(0.05);
 
   useEffect(() => {
@@ -231,9 +233,9 @@ export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
                 key={job.id}
                 role="button"
                 tabIndex={0}
-                onClick={() => onSelectJob(job.id)}
+                onClick={() => setDetailJob(job)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") onSelectJob(job.id);
+                  if (e.key === "Enter" || e.key === " ") setDetailJob(job);
                 }}
                 className={`w-full flex items-center gap-3 p-3 rounded-xl border bg-card/60 hover:border-primary/40 hover:bg-accent/30 transition-all duration-200 text-left group cursor-pointer relative ${statusBgColor[job.status]} animate-fade-in-up`}
               >
@@ -323,12 +325,21 @@ export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
                     <Trash2 className="h-4 w-4" />
                   )}
                 </button>
-                <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition flex-shrink-0" />
+                <button
+                  type="button"
+                  aria-label={`View progress for ${job.mangaTitle}`}
+                  onClick={(e) => { e.stopPropagation(); onSelectJob(job.id); }}
+                  className="p-0.5 rounded-md text-muted-foreground hover:text-foreground transition shrink-0"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
               </div>
             );
           })}
         </div>
       )}
+
+      <JobDetailModal job={detailJob} open={detailJob !== null} onClose={() => setDetailJob(null)} />
     </section>
   );
 }
