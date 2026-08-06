@@ -161,3 +161,55 @@
 .pulse-glow {
   animation: pulse-glow 2s ease-in-out infinite;
 }
+
+/* Gradient slide animation for header line */
+@keyframes gradient-slide {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+/* Shimmer animation for loading states */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.animate-shimmer {
+  animation: shimmer 2s infinite linear;
+  background-size: 200% 100%;
+}
+
+/* Bounce-in animation for step icons */
+@keyframes bounce-in {
+  0% { transform: scale(0.3); opacity: 0; }
+  50% { transform: scale(1.05); }
+  70% { transform: scale(0.9); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-bounce-in {
+  animation: bounce-in 0.5s ease-out;
+}
+
+/* Glow border animation for cards */
+@keyframes glow-border {
+  0%, 100% { border-color: oklch(0.78 0.17 65 / 0.2); }
+  50% { border-color: oklch(0.78 0.17 65 / 0.5); }
+}
+.animate-glow-border {
+  animation: glow-border 2s ease-in-out infinite;
+}
+
+/* Typing cursor blink for search placeholder */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Icon bounce micro-interaction */
+@keyframes icon-bounce {
+  0%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-4px); }
+  60% { transform: translateY(-2px); }
+}
+.animate-icon-bounce {
+  animation: icon-bounce 0.4s ease-out;
+}
