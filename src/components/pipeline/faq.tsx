@@ -25,6 +25,8 @@ interface FAQItem {
   icon: LucideIcon;
   iconClass: string;
   borderStyle: string;
+  gradientFrom: string;
+  gradientTo: string;
 }
 
 const FAQ_ITEMS: FAQItem[] = [
@@ -38,6 +40,8 @@ const FAQ_ITEMS: FAQItem[] = [
     icon: Workflow,
     iconClass: "text-sky-400",
     borderStyle: "border-l-sky-400",
+    gradientFrom: "oklch(0.7 0.15 200)",
+    gradientTo: "oklch(0.78 0.17 65)",
   },
   {
     question: "Why is there no voice in my video?",
@@ -50,6 +54,8 @@ const FAQ_ITEMS: FAQItem[] = [
     icon: VolumeX,
     iconClass: "text-rose-400",
     borderStyle: "border-l-rose-400",
+    gradientFrom: "oklch(0.65 0.2 25)",
+    gradientTo: "oklch(0.78 0.17 65)",
   },
   {
     question: "How do I speed up transcription?",
@@ -61,6 +67,8 @@ const FAQ_ITEMS: FAQItem[] = [
     icon: Zap,
     iconClass: "text-amber-400",
     borderStyle: "border-l-amber-400",
+    gradientFrom: "oklch(0.78 0.17 65)",
+    gradientTo: "oklch(0.65 0.22 50)",
   },
   {
     question: "Can I use a different narration voice?",
@@ -71,6 +79,8 @@ const FAQ_ITEMS: FAQItem[] = [
     icon: Mic,
     iconClass: "text-emerald-400",
     borderStyle: "border-l-emerald-400",
+    gradientFrom: "oklch(0.7 0.15 160)",
+    gradientTo: "oklch(0.78 0.17 65)",
   },
   {
     question: "Where are my videos stored?",
@@ -82,6 +92,8 @@ const FAQ_ITEMS: FAQItem[] = [
     icon: HardDrive,
     iconClass: "text-fuchsia-400",
     borderStyle: "border-l-fuchsia-400",
+    gradientFrom: "oklch(0.65 0.2 280)",
+    gradientTo: "oklch(0.78 0.17 65)",
   },
   {
     question: "Why did my job fail or get stuck?",
@@ -93,6 +105,8 @@ const FAQ_ITEMS: FAQItem[] = [
     icon: AlertTriangle,
     iconClass: "text-orange-400",
     borderStyle: "border-l-orange-400",
+    gradientFrom: "oklch(0.72 0.18 45)",
+    gradientTo: "oklch(0.78 0.17 65)",
   },
   {
     question: "What does 'Archive to cloud' do?",
@@ -103,6 +117,8 @@ const FAQ_ITEMS: FAQItem[] = [
     icon: CloudUpload,
     iconClass: "text-sky-400",
     borderStyle: "border-l-sky-400",
+    gradientFrom: "oklch(0.7 0.15 200)",
+    gradientTo: "oklch(0.78 0.17 65)",
   },
   {
     question: "Can I process multiple chapters at once?",
@@ -113,6 +129,8 @@ const FAQ_ITEMS: FAQItem[] = [
     icon: Layers,
     iconClass: "text-teal-400",
     borderStyle: "border-l-teal-400",
+    gradientFrom: "oklch(0.7 0.15 195)",
+    gradientTo: "oklch(0.78 0.17 65)",
   },
   {
     question: "Is this free to use?",
@@ -123,6 +141,8 @@ const FAQ_ITEMS: FAQItem[] = [
     icon: Gift,
     iconClass: "text-emerald-400",
     borderStyle: "border-l-emerald-400",
+    gradientFrom: "oklch(0.7 0.15 160)",
+    gradientTo: "oklch(0.78 0.17 65)",
   },
   {
     question: "How do I deploy this online?",
@@ -134,6 +154,8 @@ const FAQ_ITEMS: FAQItem[] = [
     icon: Globe,
     iconClass: "text-violet-400",
     borderStyle: "border-l-violet-400",
+    gradientFrom: "oklch(0.65 0.2 280)",
+    gradientTo: "oklch(0.78 0.17 65)",
   },
 ];
 
@@ -197,38 +219,66 @@ export function FAQ() {
             <div
               key={i}
               className={cn(
-                "rounded-xl border bg-card/60 overflow-hidden transition-all duration-300",
+                "rounded-xl border overflow-hidden transition-all duration-500 ease-out relative",
                 isOpen
                   ? `border-l-2 ${item.borderStyle} shadow-lg shadow-primary/5 bg-card/90`
-                  : "border-border hover:bg-card/80 hover:border-primary/20"
+                  : "border-border hover:bg-card/80 hover:border-primary/20 bg-card/60"
               )}
             >
+              {/* Gradient left border overlay when opened */}
+              {isOpen && (
+                <div
+                  className="absolute left-0 top-0 bottom-0 w-1 pointer-events-none"
+                  style={{
+                    background: `linear-gradient(to bottom, ${item.gradientFrom}, ${item.gradientTo})`,
+                    opacity: 0.6,
+                  }}
+                />
+              )}
+              {/* Subtle background gradient when expanded */}
+              {isOpen && (
+                <div
+                  className="absolute inset-0 pointer-events-none"
+                  style={{
+                    background: `linear-gradient(135deg, ${item.gradientFrom} / 0.03, ${item.gradientTo} / 0.02)`,
+                  }}
+                />
+              )}
               <button
                 onClick={() => setOpenIndex(isOpen ? null : i)}
-                className="w-full flex items-center gap-3 p-4 text-left hover:bg-muted/30 transition-colors"
+                className="w-full flex items-center gap-3 p-4 text-left hover:bg-muted/30 transition-colors relative z-10"
                 aria-expanded={isOpen}
               >
+                {/* Number badge */}
+                <span className={cn(
+                  "text-[10px] font-mono font-bold w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 transition-all duration-500",
+                  isOpen
+                    ? "bg-primary/15 text-primary"
+                    : "bg-muted/50 text-muted-foreground/50"
+                )}>
+                  {String(i + 1).padStart(2, "0")}
+                </span>
                 <div className={cn(
-                  "p-1.5 rounded-lg transition-colors flex-shrink-0",
+                  "p-1.5 rounded-lg transition-all duration-500 flex-shrink-0",
                   isOpen ? "bg-primary/15" : "bg-muted/50"
                 )}>
-                  <Icon className={cn("h-4 w-4", item.iconClass)} />
+                  <Icon className={cn("h-4 w-4", item.iconClass, isOpen && "animate-icon-bounce")} />
                 </div>
                 <span className="text-sm font-medium flex-1">{item.question}</span>
                 <ChevronDown
                   className={cn(
-                    "h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform duration-200",
+                    "h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform duration-500 ease-out",
                     isOpen && "rotate-180"
                   )}
                 />
               </button>
               <div
                 className={cn(
-                  "overflow-hidden transition-all duration-300 ease-in-out",
+                  "overflow-hidden transition-all duration-500 ease-out",
                   isOpen ? "max-h-96 opacity-100" : "max-h-0 opacity-0"
                 )}
               >
-                <div className="px-4 pb-4 pl-12 text-sm text-muted-foreground leading-relaxed">
+                <div className="px-4 pb-4 pl-[5.5rem] text-sm text-muted-foreground leading-relaxed relative z-10">
                   {parseMarkdown(item.answer)}
                 </div>
               </div>

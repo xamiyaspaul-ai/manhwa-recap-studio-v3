@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { History, ChevronRight, Loader2, CheckCircle2, AlertCircle, Clock, XCircle, Trash2, Film, Cloud, Play } from "lucide-react";
+import { History, ChevronRight, Loader2, CheckCircle2, AlertCircle, Clock, XCircle, Trash2, Film, Cloud, Play, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useSectionObserver } from "@/hooks/use-section-observer";
 import type { JobSummary, JobStatus } from "@/types/pipeline";
 
@@ -65,6 +66,32 @@ function timeAgo(dateStr: string): string {
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function exportJobsCsv(jobs: JobSummary[]) {
+  const header = ["ID", "Title", "Status", "Progress", "Chapters", "Images", "Voice", "Language", "Created", "Updated"];
+  const rows = jobs.map((j) => [
+    j.id,
+    `"${(j.mangaTitle || "").replace(/"/g, '""')}",`,
+    j.status,
+    `${j.progress}%`,
+    `${j.doneChapters}/${j.totalChapters}`,
+    `${j.doneImages}/${j.totalImages}`,
+    j.voice || "",
+    j.language || "",
+    j.createdAt,
+    j.updatedAt,
+  ].join(","));
+  const csv = [header.join(","), ...rows].join("\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  a.href = url;
+  a.download = `manhwa-recap-jobs-${dateStr}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
@@ -129,9 +156,25 @@ export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
             {completedCount > 0 && ` · ${completedCount} completed`}
           </span>
         )}
+        {jobs.length > 0 && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => exportJobsCsv(jobs)}
+                className="ml-auto gap-1.5 text-xs"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Export CSV
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Export as CSV</TooltipContent>
+          </Tooltip>
+        )}
         <button
           onClick={() => setOpen((o) => !o)}
-          className="ml-auto p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition"
+          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition"
           aria-label={open ? "Collapse history" : "Expand history"}
         >
           <ChevronRight className={`h-4 w-4 transition-transform duration-200 ${open ? "rotate-90" : ""}`} />
@@ -142,6 +185,12 @@ export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
       {!loading && jobs.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 space-y-4 animate-fade-in-up">
           <div className="relative">
+            {/* Decorative background shapes */}
+            <div className="absolute -inset-6 -z-10">
+              <div className="absolute top-0 left-1/4 w-16 h-16 rounded-full border border-border/50 opacity-30" style={{ animation: "morph 8s ease-in-out infinite" }} />
+              <div className="absolute bottom-2 right-1/4 w-12 h-12 rounded-lg border border-border/50 opacity-20 rotate-12" style={{ animation: "breathe 4s ease-in-out infinite" }} />
+              <div className="absolute top-4 right-1/3 w-8 h-8 rounded-full bg-primary/5 opacity-40" style={{ animation: "breathe 6s ease-in-out infinite 1s" }} />
+            </div>
             <div className="p-5 rounded-2xl bg-muted/30 border border-border">
               <Film className="h-10 w-10 text-muted-foreground/30" />
             </div>
@@ -157,12 +206,12 @@ export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
           </div>
           <div className="flex items-center gap-2 text-[10px] text-muted-foreground/40">
             <span className="px-2 py-0.5 rounded-md border border-border bg-muted/50">Scrape</span>
-            <span>→</span>
+            <span className="text-primary/30">→</span>
             <span className="px-2 py-0.5 rounded-md border border-border bg-muted/50">Transcribe</span>
-            <span>→</span>
+            <span className="text-primary/30">→</span>
             <span className="px-2 py-0.5 rounded-md border border-border bg-muted/50">Render</span>
-            <span>→</span>
-            <span className="px-2 py-0.5 rounded-md border border-border bg-muted/50">Video!</span>
+            <span className="text-primary/30">→</span>
+            <span className="px-2 py-0.5 rounded-md border border-primary/20 bg-primary/5 text-primary">Video!</span>
           </div>
         </div>
       )}
@@ -182,7 +231,7 @@ export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") onSelectJob(job.id);
                 }}
-                className={`w-full flex items-center gap-3 p-3 rounded-xl border bg-card/60 hover:border-primary/40 hover:bg-accent/30 transition-all duration-200 text-left group cursor-pointer ${statusBgColor[job.status]}`}
+                className={`w-full flex items-center gap-3 p-3 rounded-xl border bg-card/60 hover:border-primary/40 hover:bg-accent/30 transition-all duration-200 text-left group cursor-pointer relative ${statusBgColor[job.status]} animate-fade-in-up`}
               >
                 {/* Cover image */}
                 <div className="w-10 h-14 rounded-lg overflow-hidden bg-muted flex-shrink-0 border border-border relative">
@@ -200,10 +249,34 @@ export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
                   )}
                 </div>
 
+                {/* Progress bar */}
+                {ACTIVE_STATUSES.has(job.status) && job.progress > 0 && job.progress < 100 && (
+                  <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-b-xl overflow-hidden">
+                    <div
+                      className="h-full transition-all duration-1000 ease-out"
+                      style={{
+                        width: `${job.progress}%`,
+                        background: "linear-gradient(90deg, oklch(0.78 0.17 65), oklch(0.72 0.18 45))",
+                      }}
+                    />
+                  </div>
+                )}
+
                 {/* Job info */}
                 <div className="flex-1 min-w-0 space-y-1">
                   <p className="text-sm font-medium truncate group-hover:text-primary transition-colors">{job.mangaTitle}</p>
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    {/* Animated status indicator dot for active jobs */}
+                    {ACTIVE_STATUSES.has(job.status) && (
+                      <span
+                        className="h-1.5 w-1.5 rounded-full inline-block"
+                        style={{
+                          background: statusColor[job.status].includes("amber") ? "oklch(0.78 0.17 65)" : statusColor[job.status].includes("orange") ? "oklch(0.72 0.18 45)" : statusColor[job.status].includes("purple") ? "oklch(0.65 0.2 280)" : statusColor[job.status].includes("emerald") ? "oklch(0.7 0.15 160)" : statusColor[job.status].includes("teal") ? "oklch(0.7 0.15 195)" : "oklch(0.78 0.17 65)",
+                          animation: "pulse-glow 2s ease-in-out infinite",
+                          boxShadow: `0 0 6px 1px ${statusColor[job.status].includes("amber") ? "oklch(0.78 0.17 65 / 0.4)" : "oklch(0.7 0.15 160 / 0.4)"}`,
+                        }}
+                      />
+                    )}
                     <Icon className={`h-3.5 w-3.5 ${statusColor[job.status]} ${spinning ? "animate-spin" : ""}`} />
                     <span className={`capitalize ${statusColor[job.status]}`}>{job.status}</span>
                     <span className="text-muted-foreground/40">·</span>

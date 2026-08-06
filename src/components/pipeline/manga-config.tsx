@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   ArrowLeft,
   Loader2,
@@ -15,12 +15,18 @@ import {
   Volume2,
   Pause,
   CloudUpload,
+  ListChecks,
+  List,
+  CheckSquare,
+  Square,
+  Image as ImageIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -128,6 +134,10 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
   const [autoArchive, setAutoArchive] = useState(false);
   const [translate, setTranslate] = useState(true);
 
+  // Chapter selection mode: "first-n" = slider, "specific" = grid picker
+  const [chapterSelectionMode, setChapterSelectionMode] = useState<"first-n" | "specific">("first-n");
+  const [selectedChapterIds, setSelectedChapterIds] = useState<Set<string>>(new Set());
+
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -180,10 +190,65 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
   const availableLanguages = Array.from(new Set(chapters.map((c) => c.language)));
   const filteredChapters = chapters.filter((c) => c.language === language);
   const totalImages = filteredChapters.reduce((s, c) => s + (c.pages ?? 0), 0);
-  const effectiveLimit = chapterLimit === 0 ? filteredChapters.length : Math.min(chapterLimit, filteredChapters.length);
+
+  // Effective selection depends on mode
+  const effectiveSelectedChapters = useMemo(() => {
+    if (chapterSelectionMode === "specific") {
+      return filteredChapters.filter((c) => selectedChapterIds.has(c.id));
+    }
+    return chapterLimit === 0
+      ? filteredChapters
+      : filteredChapters.slice(0, chapterLimit);
+  }, [chapterSelectionMode, chapterLimit, filteredChapters, selectedChapterIds]);
+
+  const effectiveLimit = effectiveSelectedChapters.length;
+  const selectedTotalImages = effectiveSelectedChapters.reduce((s, c) => s + (c.pages ?? 0), 0);
   // Estimate: ~3 min per chapter (scrape + VLM + TTS + render)
   const estimatedMinutes = Math.max(1, Math.round(effectiveLimit * 3));
   const estimatedVideoDuration = Math.max(2, Math.round(effectiveLimit * 4));
+
+  // Chapter selection helpers (for specific mode)
+  const toggleChapter = useCallback((id: string) => {
+    setSelectedChapterIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectAllChapters = useCallback(() => {
+    setSelectedChapterIds(new Set(filteredChapters.map((c) => c.id)));
+  }, [filteredChapters]);
+
+  const deselectAllChapters = useCallback(() => {
+    setSelectedChapterIds(new Set());
+  }, []);
+
+  const quickSelect = useCallback((range: "first-5" | "first-10" | "last-5" | "all") => {
+    const ids = filteredChapters.map((c) => c.id);
+    let picked: string[];
+    switch (range) {
+      case "first-5":
+        picked = ids.slice(0, 5);
+        break;
+      case "first-10":
+        picked = ids.slice(0, 10);
+        break;
+      case "last-5":
+        picked = ids.slice(-5);
+        break;
+      case "all":
+        picked = ids;
+        break;
+    }
+    setSelectedChapterIds(new Set(picked));
+  }, [filteredChapters]);
+
+  // Reset selected chapters when language changes
+  useEffect(() => {
+    setSelectedChapterIds(new Set());
+  }, [language]);
 
   const handleStart = useCallback(async () => {
     setStarting(true);
@@ -206,6 +271,12 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
         }),
       });
 
+      // Determine chapter payload
+      const isSpecificMode = chapterSelectionMode === "specific" && selectedChapterIds.size > 0;
+      const chapterPayload = isSpecificMode
+        ? { chapterLimit: selectedChapterIds.size, chapterIds: Array.from(selectedChapterIds) }
+        : { chapterLimit };
+
       // Create job.
       const res = await fetch("/api/jobs", {
         method: "POST",
@@ -215,7 +286,7 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
           mangaTitle: manga.title,
           coverUrl: manga.coverUrl,
           language,
-          chapterLimit,
+          ...chapterPayload,
           voice,
           translate,
           groqKey: groqKey || undefined,
@@ -238,7 +309,7 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
     } finally {
       setStarting(false);
     }
-  }, [groqKey, geminiKey, openRouterKey, megaEmail, megaPassword, autoArchive, voice, language, chapterLimit, translate, manga, onJobCreated]);
+  }, [groqKey, geminiKey, openRouterKey, megaEmail, megaPassword, autoArchive, voice, language, chapterLimit, chapterSelectionMode, selectedChapterIds, translate, manga, onJobCreated]);
 
   // --- Voice preview ---
   // Fetches a short edge-tts sample for the selected voice and plays it.
@@ -428,21 +499,137 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
               Chapters to process
             </Label>
             <Badge variant="secondary" className="font-mono">
-              {chapterLimit === 0 ? "ALL" : `${effectiveLimit} / ${filteredChapters.length}`}
+              {chapterSelectionMode === "specific"
+                ? `${effectiveLimit} / ${filteredChapters.length}`
+                : chapterLimit === 0
+                  ? "ALL"
+                  : `${effectiveLimit} / ${filteredChapters.length}`}
             </Badge>
           </div>
-          <Slider
-            value={[chapterLimit]}
-            onValueChange={([v]) => setChapterLimit(v)}
-            min={0}
-            max={Math.max(50, filteredChapters.length)}
-            step={1}
-            className="w-full"
-          />
-          <div className="flex justify-between text-xs text-muted-foreground">
-            <span>0 = all chapters</span>
-            <span>~{totalImages > 0 ? Math.round((effectiveLimit / Math.max(1, filteredChapters.length)) * totalImages) : 0} images to download</span>
+
+          {/* Mode toggle */}
+          <div className="flex gap-1 p-1 rounded-lg bg-muted/50 border border-border/50">
+            <button
+              type="button"
+              onClick={() => setChapterSelectionMode("first-n")}
+              className={`flex items-center gap-1.5 flex-1 justify-center px-3 py-1.5 rounded-md text-xs font-medium transition-all ${chapterSelectionMode === "first-n" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              <List className="h-3.5 w-3.5" />
+              First N chapters
+            </button>
+            <button
+              type="button"
+              onClick={() => setChapterSelectionMode("specific")}
+              className={`flex items-center gap-1.5 flex-1 justify-center px-3 py-1.5 rounded-md text-xs font-medium transition-all ${chapterSelectionMode === "specific" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              <ListChecks className="h-3.5 w-3.5" />
+              Select specific chapters
+            </button>
           </div>
+
+          {/* First N mode: slider */}
+          {chapterSelectionMode === "first-n" && (
+            <div className="space-y-3 animate-fade-in-up">
+              <Slider
+                value={[chapterLimit]}
+                onValueChange={([v]) => setChapterLimit(v)}
+                min={0}
+                max={Math.max(50, filteredChapters.length)}
+                step={1}
+                className="w-full"
+              />
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>0 = all chapters</span>
+                <span>~{totalImages > 0 ? Math.round((effectiveLimit / Math.max(1, filteredChapters.length)) * totalImages) : 0} images to download</span>
+              </div>
+            </div>
+          )}
+
+          {/* Specific mode: chapter grid */}
+          {chapterSelectionMode === "specific" && (
+            <div className="space-y-3 animate-fade-in-up">
+              {/* Select all / deselect all + quick selects */}
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={selectAllChapters} className="h-7 text-xs">
+                  <CheckSquare className="h-3 w-3 mr-1" />
+                  Select all
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={deselectAllChapters} className="h-7 text-xs">
+                  <Square className="h-3 w-3 mr-1" />
+                  Deselect all
+                </Button>
+                <div className="w-px h-4 bg-border" />
+                <Button type="button" variant="outline" size="sm" onClick={() => quickSelect("first-5")} className="h-7 text-xs">
+                  First 5
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => quickSelect("first-10")} className="h-7 text-xs">
+                  First 10
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => quickSelect("last-5")} className="h-7 text-xs">
+                  Last 5
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => quickSelect("all")} className="h-7 text-xs">
+                  All
+                </Button>
+              </div>
+
+              {/* Selected count */}
+              <div className="flex items-center gap-2">
+                <Badge variant={effectiveLimit > 0 ? "default" : "secondary"} className="text-xs">
+                  {effectiveLimit} of {filteredChapters.length} chapters selected
+                </Badge>
+                {effectiveLimit > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    ~{selectedTotalImages} images
+                  </span>
+                )}
+              </div>
+
+              {/* Chapter grid */}
+              {filteredChapters.length > 0 && (
+                <div className="max-h-64 overflow-y-auto scrollbar-thin rounded-lg border border-border/50 p-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                    {filteredChapters.map((ch, idx) => {
+                      const checked = selectedChapterIds.has(ch.id);
+                      return (
+                        <button
+                          key={ch.id}
+                          type="button"
+                          onClick={() => toggleChapter(ch.id)}
+                          className={`flex items-start gap-2 p-3 rounded-lg border bg-card/50 hover:bg-card/80 transition-all text-left animate-item-in ${checked ? "border-primary/30 bg-primary/5" : "border-border"}`}
+                          style={{ animationDelay: `${Math.min(idx * 20, 300)}ms` }}
+                        >
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={() => toggleChapter(ch.id)}
+                            className="mt-0.5 flex-shrink-0"
+                            aria-label={`Toggle chapter ${ch.chapter ?? idx + 1}`}
+                          />
+                          <div className="min-w-0 flex-1 space-y-0.5">
+                            <p className="text-xs font-medium leading-tight truncate">
+                              Ch. {ch.chapter ?? idx + 1}
+                            </p>
+                            {ch.title && (
+                              <p className="text-[10px] text-muted-foreground leading-tight truncate">
+                                {ch.title}
+                              </p>
+                            )}
+                            {ch.pages > 0 && (
+                              <p className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
+                                <ImageIcon className="h-2.5 w-2.5" />
+                                {ch.pages} pages
+                              </p>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Duration estimate card */}
           <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 border border-border/50">
             <div className="flex items-center gap-2 flex-1">
@@ -451,6 +638,9 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
                 <p className="text-xs font-medium">Estimated processing time</p>
                 <p className="text-xs text-muted-foreground">
                   ~{estimatedMinutes} min pipeline · ~{estimatedVideoDuration} min video output
+                  {chapterSelectionMode === "specific" && effectiveLimit > 0 && (
+                    <span className="text-muted-foreground/70"> · ~{selectedTotalImages} images</span>
+                  )}
                 </p>
               </div>
             </div>
@@ -690,7 +880,7 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
           size="lg"
           className="w-full font-semibold"
           onClick={handleStart}
-          disabled={starting || chapterLoading || filteredChapters.length === 0}
+          disabled={starting || chapterLoading || filteredChapters.length === 0 || (chapterSelectionMode === "specific" && effectiveLimit === 0)}
         >
           {starting ? (
             <>

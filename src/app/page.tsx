@@ -23,6 +23,7 @@ import { FeaturesGrid } from "@/components/pipeline/features-grid";
 import { BookmarksSection } from "@/components/pipeline/bookmarks-section";
 import { OnboardingTour } from "@/components/pipeline/onboarding-tour";
 import { Testimonials } from "@/components/pipeline/testimonials";
+import { PipelineStats } from "@/components/pipeline/pipeline-stats";
 import { ActivityFeed } from "@/components/pipeline/activity-feed";
 import { useJobProgress } from "@/hooks/use-job-progress";
 import { useScrollProgress } from "@/hooks/use-section-observer";
@@ -276,6 +277,10 @@ export default function Home() {
             <Separator className="max-w-4xl mx-auto opacity-30" />
 
             <FeaturesGrid />
+
+            <Separator className="max-w-4xl mx-auto opacity-30" />
+
+            <PipelineStats />
 
             <Separator className="max-w-4xl mx-auto opacity-30" />
 

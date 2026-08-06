@@ -379,3 +379,32 @@
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-2px); }
 }
+
+/* Conic gradient rotation for decorative elements */
+@keyframes gradient-rotate {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+.animate-gradient-rotate {
+  animation: gradient-rotate 8s linear infinite;
+}
+
+/* Subtle border-radius morphing for cards */
+@keyframes morph {
+  0%, 100% { border-radius: 60% 40% 50% 50% / 50% 60% 40% 50%; }
+  25% { border-radius: 40% 60% 60% 40% / 50% 40% 60% 50%; }
+  50% { border-radius: 50% 50% 40% 60% / 60% 50% 50% 40%; }
+  75% { border-radius: 60% 40% 50% 50% / 40% 50% 60% 50%; }
+}
+.animate-morph {
+  animation: morph 8s ease-in-out infinite;
+}
+
+/* Very subtle scale breathe for ambient feel */
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.01); }
+}
+.animate-breathe {
+  animation: breathe 4s ease-in-out infinite;
+}

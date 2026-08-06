@@ -149,6 +149,7 @@ export interface CreateJobInput {
   autoArchive?: boolean;
   bgmPath?: string | null; // BGM filename (relative to data/bgm/), null = default
   useBgm?: boolean; // whether to overlay BGM
+  chapterIds?: string[]; // specific chapter IDs to process (overrides chapterLimit)
 }
 
 export interface BgmTrack {

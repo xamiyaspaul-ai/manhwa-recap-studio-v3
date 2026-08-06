@@ -9,6 +9,8 @@ const TESTIMONIALS = [
     handle: "@alex_recaps",
     avatar: "AK",
     avatarColor: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+    glowColor: "oklch(0.78 0.17 65)",
+    hoverBorder: "hover:border-l-amber-400",
     rating: 5,
     text: "I went from spending 4 hours manually editing recap videos to under 10 minutes. The VLM transcription is shockingly accurate.",
     stat: "200+ videos",
@@ -19,6 +21,8 @@ const TESTIMONIALS = [
     handle: "@manga_sarah",
     avatar: "SM",
     avatarColor: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+    glowColor: "oklch(0.7 0.15 160)",
+    hoverBorder: "hover:border-l-emerald-400",
     rating: 5,
     text: "The multi-source search saved me so much time. Found chapters on AsuraScans that weren't on MangaDex. Absolute game changer.",
     stat: "50+ series",
@@ -29,6 +33,8 @@ const TESTIMONIALS = [
     handle: "@jordan_wt",
     avatar: "JL",
     avatarColor: "bg-fuchsia-500/15 text-fuchsia-400 border-fuchsia-500/30",
+    glowColor: "oklch(0.65 0.2 280)",
+    hoverBorder: "hover:border-l-fuchsia-400",
     rating: 5,
     text: "Completely free and runs locally? I was skeptical, but the quality rivals paid tools. The TTS voices sound surprisingly natural.",
     stat: "$0 cost",
@@ -39,6 +45,8 @@ const TESTIMONIALS = [
     handle: "@priya_manhwa",
     avatar: "PR",
     avatarColor: "bg-sky-500/15 text-sky-400 border-sky-500/30",
+    glowColor: "oklch(0.7 0.15 200)",
+    hoverBorder: "hover:border-l-sky-400",
     rating: 5,
     text: "The auto-archive to Mega is genius. I can process entire series without worrying about disk space. Cloud restore just works.",
     stat: "500GB+",
@@ -49,6 +57,8 @@ const TESTIMONIALS = [
     handle: "@mike_toons",
     avatar: "MT",
     avatarColor: "bg-rose-500/15 text-rose-400 border-rose-500/30",
+    glowColor: "oklch(0.65 0.2 25)",
+    hoverBorder: "hover:border-l-rose-400",
     rating: 4,
     text: "Panel detection with YOLO is great — no more chopped panels in my videos. The sequential chapter processing is rock solid.",
     stat: "1000+ ch",
@@ -59,6 +69,8 @@ const TESTIMONIALS = [
     handle: "@yuki_reads",
     avatar: "YH",
     avatarColor: "bg-teal-500/15 text-teal-400 border-teal-500/30",
+    glowColor: "oklch(0.7 0.15 195)",
+    hoverBorder: "hover:border-l-teal-400",
     rating: 5,
     text: "I use this for Japanese manga too — the multi-language support with 9 languages is incredible. Korean manhwa translation is spot on.",
     stat: "9 languages",
@@ -92,11 +104,21 @@ export function Testimonials() {
           {TESTIMONIALS.map((t, i) => (
             <div
               key={t.handle}
-              className={`group relative p-5 rounded-xl border border-border bg-card/50 hover:border-primary/20 hover:bg-card/80 transition-all duration-300 hover:shadow-lg hover:shadow-primary/5 ${isVisible ? "animate-item-in" : "opacity-0"}`}
+              className={`group relative p-5 rounded-xl border-l-4 border-l-transparent border border-t border-r border-b border-border bg-card/50 hover:border-primary/20 hover:bg-card/80 transition-all duration-300 hover:shadow-lg hover:shadow-primary/5 hover:scale-[1.02] ${isVisible ? "animate-item-in" : "opacity-0"}`}
               style={{ animationDelay: isVisible ? `${i * 80}ms` : "0ms" }}
             >
-              {/* Quote icon */}
-              <Quote className="h-6 w-6 text-primary/10 group-hover:text-primary/20 transition-colors mb-3" />
+              {/* Colored left border on hover */}
+              <div
+                className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300`}
+                style={{ background: t.glowColor }}
+              />
+              {/* Subtle glow on hover */}
+              <div
+                className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+                style={{ boxShadow: `0 0 20px -5px ${t.glowColor.replace(')', ' / 0.15)')}` }}
+              />
+              {/* Quote icon with gentle float on hover */}
+              <Quote className="h-6 w-6 text-primary/10 group-hover:text-primary/20 transition-all duration-300 mb-3 group-hover:animate-float" />
 
               {/* Stars */}
               <div className="flex items-center gap-0.5 mb-3">

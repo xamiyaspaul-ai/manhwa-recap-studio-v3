@@ -78,6 +78,7 @@ export async function POST(req: NextRequest) {
 
     const language = body.language || "en";
     const chapterLimit = Math.max(0, body.chapterLimit || 0);
+    const chapterIds = body.chapterIds ?? null;
     const voice = body.voice || "en-US-AndrewNeural";
     const translate = body.translate !== false;
     const bgmPath = body.bgmPath ?? null;
@@ -113,9 +114,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Apply chapter limit (0 = all).
-    const selected =
-      chapterLimit > 0 ? chapterFeed.slice(0, chapterLimit) : chapterFeed;
+    // Apply chapter selection: specific IDs take priority, then chapterLimit, then all.
+    let selected: typeof chapterFeed;
+    if (chapterIds && chapterIds.length > 0) {
+      const idSet = new Set(chapterIds);
+      selected = chapterFeed.filter((c) => idSet.has(c.id));
+    } else {
+      selected =
+        chapterLimit > 0 ? chapterFeed.slice(0, chapterLimit) : chapterFeed;
+    }
 
     if (selected.length === 0) {
       return NextResponse.json(

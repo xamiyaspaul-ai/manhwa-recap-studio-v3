@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useCallback, useMemo, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
-import { Search, Loader2, Sparkles, ExternalLink, X, Clock, Bookmark, BookmarkCheck, ArrowUpDown, BookmarkCheckIcon } from "lucide-react";
+import { Search, Loader2, Sparkles, ExternalLink, X, Clock, Bookmark, BookmarkCheck, ArrowUpDown, BookmarkCheckIcon, History } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { useSectionObserver } from "@/hooks/use-section-observer";
+import { useSearchHistory } from "@/hooks/use-search-history";
 import type { MangadexManga, MangaSource } from "@/types/pipeline";
 
 interface SearchSectionProps {
@@ -106,29 +107,23 @@ const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "chapters-desc", label: "Most Chapters" },
 ];
 
-const SEARCH_HISTORY_KEY = "manhwa-search-history";
-const MAX_HISTORY = 5;
-
-function getSearchHistory(): string[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(SEARCH_HISTORY_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function setSearchHistory(items: string[]) {
-  try {
-    localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(items.slice(0, MAX_HISTORY)));
-  } catch {}
+function formatTimeAgo(timestamp: number): string {
+  const seconds = Math.floor((Date.now() - timestamp) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return `${Math.floor(days / 30)}mo ago`;
 }
 
 const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
   function SearchSection({ onResults, onSelectManga, externalQuery, onClearResults, isBookmarked, onBookmarkToggle }, ref) {
     const { toast } = useToast();
     const { ref: sectionRef, isVisible } = useSectionObserver(0.05);
+    const { history: searchHistory, addHistory, removeHistory, clearHistory } = useSearchHistory();
     const [query, setQuery] = useState("");
     const [loading, setLoading] = useState(false);
     const [resolvingId, setResolvingId] = useState<string | null>(null);
@@ -140,13 +135,23 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
     const [hasSearched, setHasSearched] = useState(false);
     const [searchDuration, setSearchDuration] = useState<number | null>(null);
     const [inputFocused, setInputFocused] = useState(false);
-    const [searchHistory, setSearchHistoryState] = useState<string[]>([]);
     const [poppedBookmark, setPoppedBookmark] = useState<string | null>(null);
     const searchStartTime = useRef<number>(0);
+    const historyPanelRef = useRef<HTMLDivElement>(null);
 
+    // Click outside detection for history panel
     useEffect(() => {
-      setSearchHistoryState(getSearchHistory());
-    }, []);
+      if (!inputFocused) return;
+      function handleClickOutside(e: MouseEvent) {
+        const panel = historyPanelRef.current;
+        const input = document.getElementById("search-input");
+        if (panel && !panel.contains(e.target as Node) && input && !input.contains(e.target as Node)) {
+          setInputFocused(false);
+        }
+      }
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, [inputFocused]);
 
     useImperativeHandle(ref, () => ({
       clearResults: () => {
@@ -171,30 +176,6 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
         }, 100);
       }
     }, [externalQuery]);
-
-    const addToHistory = useCallback((q: string) => {
-      const trimmed = q.trim();
-      if (!trimmed) return;
-      setSearchHistoryState((prev) => {
-        const filtered = prev.filter((item) => item.toLowerCase() !== trimmed.toLowerCase());
-        const next = [trimmed, ...filtered].slice(0, MAX_HISTORY);
-        setSearchHistory(next);
-        return next;
-      });
-    }, []);
-
-    const removeFromHistory = useCallback((item: string) => {
-      setSearchHistoryState((prev) => {
-        const next = prev.filter((h) => h !== item);
-        setSearchHistory(next);
-        return next;
-      });
-    }, []);
-
-    const clearHistory = useCallback(() => {
-      setSearchHistoryState([]);
-      setSearchHistory([]);
-    }, []);
 
     const handleClearResults = useCallback(() => {
       setResults([]);
@@ -234,7 +215,7 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
         setResults(manga);
         setSourceCounts(data.sources ?? null);
         onResults(manga, q);
-        addToHistory(q);
+        if (manga.length > 0) addHistory(q, manga.length);
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Search failed";
         if (e instanceof DOMException && e.name === "AbortError") {
@@ -248,7 +229,7 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
       } finally {
         setLoading(false);
       }
-    }, [query, onResults, addToHistory]);
+    }, [query, onResults, addHistory]);
 
     const visibleResults = useMemo(() => {
       let filtered = filter === "all" ? results : results.filter((m) => (m.source ?? "mangahere") === filter);
@@ -343,32 +324,45 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
       });
     }, [onBookmarkToggle, isBookmarked, toast]);
 
-    const showHistory = inputFocused && query === "" && searchHistory.length > 0 && !hasSearched;
+    const showHistory = inputFocused && query === "" && !hasSearched;
 
     return (
       <section ref={sectionRef} className="space-y-6">
         {/* Hero with glow orbs */}
         <div className="relative">
           <div className="absolute inset-0 overflow-hidden pointer-events-none">
+            {/* Orb 1: Amber/warm gradient */}
             <div
-              className="hidden sm:block absolute -top-20 left-1/4 w-[300px] h-[300px] rounded-full blur-[100px] opacity-10"
+              className="hidden lg:block absolute -top-20 left-1/4 w-[300px] h-[300px] rounded-full blur-[80px] opacity-15"
               style={{
                 background: "radial-gradient(circle, oklch(0.78 0.17 65), oklch(0.72 0.18 45 / 0.3), transparent)",
                 animation: "float-orb-1 8s ease-in-out infinite",
               }}
             />
+            {/* Orb 2: Orange/amber gradient */}
             <div
-              className="hidden sm:block absolute -top-10 right-1/4 w-[250px] h-[250px] rounded-full blur-[80px] opacity-[0.08]"
+              className="hidden lg:block absolute -top-10 right-1/4 w-[250px] h-[250px] rounded-full blur-[80px] opacity-15"
               style={{
-                background: "radial-gradient(circle, oklch(0.72 0.18 45), oklch(0.78 0.17 65 / 0.2), transparent)",
+                background: "radial-gradient(circle, oklch(0.72 0.18 45), oklch(0.65 0.22 50 / 0.3), transparent)",
                 animation: "float-orb-2 12s ease-in-out infinite",
               }}
             />
+            {/* Orb 3: Rose/amber gradient */}
             <div
-              className="hidden sm:block absolute top-10 left-1/2 -translate-x-1/2 w-[200px] h-[200px] rounded-full blur-[90px] opacity-[0.06]"
+              className="hidden lg:block absolute top-10 left-1/2 -translate-x-1/2 w-[200px] h-[200px] rounded-full blur-[80px] opacity-15"
               style={{
-                background: "radial-gradient(circle, oklch(0.85 0.12 75), oklch(0.78 0.17 65 / 0.2), transparent)",
+                background: "radial-gradient(circle, oklch(0.65 0.2 25), oklch(0.72 0.18 45 / 0.3), transparent)",
                 animation: "float-orb-3 15s ease-in-out infinite",
+              }}
+            />
+          </div>
+
+          {/* Radial gradient backdrop behind title text */}
+          <div className="absolute inset-0 overflow-hidden pointer-events-none lg:block hidden">
+            <div
+              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[300px] rounded-full opacity-[0.07]"
+              style={{
+                background: "radial-gradient(ellipse, oklch(0.78 0.17 65), oklch(0.65 0.2 25 / 0.3), transparent 70%)",
               }}
             />
           </div>
@@ -448,46 +442,78 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
           </Button>
         </form>
 
-        {/* Search history chips */}
+        {/* Search history dropdown panel */}
         {showHistory && (
-          <div className="max-w-2xl mx-auto space-y-2 animate-fade-in-up">
-            <div className="flex items-center gap-2">
-              <Clock className="h-3 w-3 text-muted-foreground/60" />
-              <span className="text-[11px] text-muted-foreground/60 font-medium">Recent searches</span>
-              <button
-                type="button"
-                onClick={clearHistory}
-                className="ml-auto text-[11px] text-muted-foreground/40 hover:text-muted-foreground transition-colors"
-              >
-                Clear history
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {searchHistory.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => {
-                    setQuery(item);
-                    const input = document.getElementById("search-input") as HTMLInputElement | null;
-                    if (input) input.focus();
-                  }}
-                  className="group flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border border-border bg-card/50 text-muted-foreground hover:text-foreground hover:border-primary/30 hover:bg-primary/5 transition-all"
-                >
-                  <span>{item}</span>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      removeFromHistory(item);
-                    }}
-                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:text-rose-400 transition-all"
-                    aria-label={`Remove "${item}" from history`}
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </button>
-                </button>
-              ))}
+          <div
+            ref={historyPanelRef}
+            className="max-w-2xl mx-auto mt-1.5 animate-fade-in-up"
+          >
+            <div className="rounded-xl border border-border bg-card/80 backdrop-blur-sm shadow-lg shadow-black/20 overflow-hidden">
+              {searchHistory.length > 0 ? (
+                <>
+                  <div className="max-h-64 overflow-y-auto">
+                    {searchHistory.map((item) => (
+                      <button
+                        key={`${item.query}-${item.timestamp}`}
+                        type="button"
+                        onClick={() => {
+                          setQuery(item.query);
+                          setInputFocused(false);
+                          setTimeout(() => {
+                            const input = document.getElementById("search-input") as HTMLInputElement | null;
+                            if (input) input.focus();
+                            const form = input?.closest("form");
+                            if (form) form.requestSubmit();
+                          }, 0);
+                        }}
+                        className="group w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-muted/50 transition-colors border-b border-border/50 last:border-b-0"
+                      >
+                        <Search className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-foreground truncate group-hover:text-primary transition-colors">
+                            {item.query}
+                          </p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <Clock className="h-2.5 w-2.5 text-muted-foreground/40" />
+                            <span className="text-[11px] text-muted-foreground/50">{formatTimeAgo(item.timestamp)}</span>
+                            <span className="text-[11px] text-muted-foreground/40">·</span>
+                            <span className="text-[11px] text-muted-foreground/50">{item.resultCount} result{item.resultCount !== 1 ? "s" : ""}</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeHistory(item.query);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-1 rounded-lg hover:bg-muted text-muted-foreground/50 hover:text-rose-400 transition-all shrink-0"
+                          aria-label={`Remove "${item.query}" from history`}
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-between px-4 py-2 border-t border-border/50 bg-muted/30">
+                    <div className="flex items-center gap-1.5">
+                      <History className="h-3 w-3 text-muted-foreground/40" />
+                      <span className="text-[11px] text-muted-foreground/50">{searchHistory.length} item{searchHistory.length !== 1 ? "s" : ""}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={clearHistory}
+                      className="text-[11px] text-muted-foreground/50 hover:text-rose-400 transition-colors"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-6 gap-2">
+                  <History className="h-5 w-5 text-muted-foreground/30" />
+                  <p className="text-xs text-muted-foreground/50">No recent searches</p>
+                </div>
+              )}
             </div>
           </div>
         )}
