@@ -115,13 +115,31 @@ export function StatsBar() {
     <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-6 py-4 animate-fade-in-up">
       {items.map((item) => {
         const Icon = item.icon;
+        const maxVal = stats.totalJobs > 0 ? stats.totalJobs : 1;
+        const pct = Math.min(100, Math.round((item.value / maxVal) * 100));
+        // Extract tailwind color from text-* class for the bar background
+        const barColor = item.color
+          .replace("text-emerald-400", "bg-emerald-400")
+          .replace("text-sky-400", "bg-sky-400")
+          .replace("text-amber-400", "bg-amber-400")
+          .replace("text-fuchsia-400", "bg-fuchsia-400");
         return (
-          <div key={item.label} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-card/50 border border-border">
-            <Icon className={`h-4 w-4 ${item.color}`} />
-            <span className="text-sm font-semibold tabular-nums">
-              <AnimatedCounter target={item.value} />
-            </span>
-            <span className="text-xs text-muted-foreground hidden sm:inline">{item.label}</span>
+          <div
+            key={item.label}
+            className="relative flex items-center gap-2 px-3 py-1.5 rounded-lg bg-card/50 border border-border overflow-hidden"
+          >
+            {/* Mini sparkline bar behind content */}
+            <div
+              className={`absolute inset-y-0 left-0 ${barColor} opacity-[0.07] transition-all duration-1000`}
+              style={{ width: `${pct}%` }}
+            />
+            <div className="relative flex items-center gap-2">
+              <Icon className={`h-4 w-4 ${item.color}`} />
+              <span className="text-sm font-semibold tabular-nums">
+                <AnimatedCounter target={item.value} />
+              </span>
+              <span className="text-xs text-muted-foreground hidden sm:inline">{item.label}</span>
+            </div>
           </div>
         );
       })}

@@ -305,20 +305,47 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
 
     return (
       <section className="space-y-6">
-        <div className="text-center space-y-3">
-          <h1 className="text-4xl sm:text-5xl font-bold tracking-tight">
-            <span className="text-gradient">Manhwa Recap Studio</span>
-          </h1>
-          <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
-            Enter any manhwa, manga, or webtoon name. We search{" "}
-            <span className="text-foreground font-medium">MangaHere, FanFox, Webtoons, AsuraScans, MyAnimeList &amp; AniList</span> at once,
-            scrape every single chapter, translate to English, and render a narrated recap video.
-          </p>
-          <p className="text-xs text-muted-foreground/60">
-            Press <kbd className="px-1.5 py-0.5 rounded border border-border bg-muted text-foreground/80 font-mono text-[10px]">/</kbd> to focus search
-            {" · "}
-            <kbd className="px-1.5 py-0.5 rounded border border-border bg-muted text-foreground/80 font-mono text-[10px]">Esc</kbd> to clear
-          </p>
+        {/* Hero glow orbs — hidden on mobile */}
+        <div className="relative">
+          <div className="absolute inset-0 overflow-hidden pointer-events-none">
+            <div
+              className="hidden sm:block absolute -top-20 left-1/4 w-[300px] h-[300px] rounded-full blur-[100px] opacity-10"
+              style={{
+                background: "radial-gradient(circle, oklch(0.78 0.17 65), oklch(0.72 0.18 45 / 0.3), transparent)",
+                animation: "float-orb-1 8s ease-in-out infinite",
+              }}
+            />
+            <div
+              className="hidden sm:block absolute -top-10 right-1/4 w-[250px] h-[250px] rounded-full blur-[80px] opacity-[0.08]"
+              style={{
+                background: "radial-gradient(circle, oklch(0.72 0.18 45), oklch(0.78 0.17 65 / 0.2), transparent)",
+                animation: "float-orb-2 12s ease-in-out infinite",
+              }}
+            />
+            <div
+              className="hidden sm:block absolute top-10 left-1/2 -translate-x-1/2 w-[200px] h-[200px] rounded-full blur-[90px] opacity-[0.06]"
+              style={{
+                background: "radial-gradient(circle, oklch(0.85 0.12 75), oklch(0.78 0.17 65 / 0.2), transparent)",
+                animation: "float-orb-3 15s ease-in-out infinite",
+              }}
+            />
+          </div>
+
+          <div className="relative text-center space-y-3">
+            <h1 className="text-4xl sm:text-5xl font-bold tracking-tight">
+              <span className="text-gradient">Manhwa Recap Studio</span>
+            </h1>
+            <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
+              Enter any manhwa, manga, or webtoon name. We search{" "}
+              <span className="text-foreground font-medium">MangaHere, FanFox, Webtoons, AsuraScans, MyAnimeList &amp; AniList</span> at once,
+              scrape every single chapter, translate to English, and render a narrated recap video.
+            </p>
+            <p className="text-xs text-muted-foreground/60">
+              Press <kbd className="px-1.5 py-0.5 rounded border border-border bg-muted text-foreground/80 font-mono text-[10px]">/</kbd> to focus search
+              {" · "}
+              <kbd className="px-1.5 py-0.5 rounded border border-border bg-muted text-foreground/80 font-mono text-[10px]">Esc</kbd> to clear
+            </p>
+          </div>
         </div>
 
         <form

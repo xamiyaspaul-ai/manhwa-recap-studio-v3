@@ -14,14 +14,12 @@ Work Log:
 - Verified page renders correctly via agent-browser on localhost:3000
 - Page shows: Search section, Stats bar, Trending Searches (Solo Leveling, Tower of God, etc.), How It Works, Job History, FAQ, Footer
 - Lint passes clean (no errors)
-- Screenshots saved: verify-home-desktop.png, verify-home-mobile.png
 
 Stage Summary:
 - Project successfully cloned and running at http://localhost:3000/
 - All API routes functional: /api/jobs (200), /api/stats (200), /api/search (200)
 - Database initialized with SQLite at db/custom.db
 - Pipeline mini-service not started (requires Python deps - edge-tts, YOLO, etc.)
-- Socket.io connection to pipeline-service (port 3001) will show as disconnected until that service is started
 
 ---
 
@@ -31,35 +29,47 @@ Stage Summary:
 - **Key Features**: Manhwa search (MangaDex), chapter scraping, VLM panel detection, TTS narration, video rendering, cloud archival (Mega/R2)
 
 ## Current Goals / Completed Modifications / Verification Results
-- **Round 2 — QA + UI Enhancements (Task ID: 2)**:
-  - Comprehensive QA test via agent-browser: all routes 200, search returns 31 results for "Solo Leveling", source filtering works, FAQ accordion works, API routes return correct data
-  - **New Component: ConnectionIndicator** — green/red pulsing dot showing WebSocket pipeline status, with Tooltip
-  - **Enhanced Header**: animated 2px gradient line below header (gradient-slide CSS animation), keyboard shortcuts popover (`/` to focus, `Esc` to clear), back-to-top floating button (appears on scroll)
-  - **Enhanced Search**: search history (localStorage, 5 items, chips on focus+empty), clear results button (X icon next to filters), result count summary with search duration timing, content rating dots on cards, manga status badges (Ongoing/Completed/Hiatus), forwardRef with imperative handle for parent-controlled clearing
-  - **Enhanced How It Works**: animated gradient connector lines (horizontal desktop, vertical mobile), hover icon bounce + glow border, click-to-expand with extra details per step
-  - **Enhanced Trending Searches**: alternating Flame/Sparkles icons, pulse animation on TrendingUp label, gradient border glow on hover
-  - **Enhanced Stats Bar**: welcome message when no jobs, animated counter (requestAnimationFrame ease-out), shimmer/skeleton loading state
-  - **New CSS Animations**: gradient-slide, shimmer, bounce-in, glow-border, blink, icon-bounce
-  - All features responsive (mobile-first), only shadcn/ui + lucide-react used, dark amber theme preserved
-  - Lint: 0 errors throughout
-- **Round 1 — Initial Setup (Task ID: 1)**:
-  - Cloned repo, installed 902 deps, pushed Prisma schema, started dev server
-  - Verified page renders correctly via agent-browser
-  - Sticky footer, dark theme, grain texture background
-  - All API routes functional: /api/jobs (200), /api/stats (200), /api/search (200)
+
+### Round 3 — Theme, Settings, FAQ Icons, Hero Glow, Footer (Task ID: 3)
+- **Theme Toggle**: Full light/dark mode via next-themes (Sun/Moon icon with rotate+scale transition), oklch color system in both modes, providers.tsx wrapper, theme-aware bg-grain and text-gradient
+- **Settings Dialog**: Gear icon in header opens Dialog with voice (10 options), chapter limit, language (9 langs), 3 API key inputs, auto-archive toggle, loads/saves via /api/settings
+- **FAQ Icons**: 10 unique lucide icons (Workflow, VolumeX, Zap, Mic, HardDrive, AlertTriangle, CloudUpload, Layers, Gift, Globe), colored left border when expanded, markdown parsing (**bold** and `code`), max-height transition
+- **Hero Glow Orbs**: 3 floating amber/gold gradient orbs behind hero title (8s/12s/15s animations, hidden on mobile)
+- **Section Dividers**: 3 Separator components between major home sections
+- **Footer Enhancement**: Tech badges row (Next.js, Tailwind, Prisma, Framer Motion, Socket.IO), "Built for manhwa fans" tagline, spacious layout
+- **Job History Empty State**: Film icon + "No jobs yet" message with subtext
+- **Stats Bar Sparklines**: Proportional background bars behind each stat number
+- Lint: 0 errors, verified via agent-browser
+
+### Round 2 — QA + UI Enhancements (Task ID: 2)
+- Comprehensive QA test via agent-browser: all routes 200, search returns 31 results for "Solo Leveling", source filtering works, FAQ accordion works
+- **New Component: ConnectionIndicator** — green/red pulsing dot showing WebSocket pipeline status, with Tooltip
+- **Enhanced Header**: animated 2px gradient line below header, keyboard shortcuts popover (`/` and `Esc`), back-to-top floating button
+- **Enhanced Search**: search history (localStorage, 5 items), clear results button, result count summary with duration, content rating dots, manga status badges, forwardRef
+- **Enhanced How It Works**: animated gradient connector lines, hover icon bounce + glow border, click-to-expand steps
+- **Enhanced Trending Searches**: alternating Flame/Sparkles icons, pulse animation, gradient border glow
+- **Enhanced Stats Bar**: welcome message when no jobs, animated counter (requestAnimationFrame), shimmer/skeleton loading
+- **New CSS Animations**: gradient-slide, shimmer, bounce-in, glow-border, blink, icon-bounce
+- Lint: 0 errors
+
+### Round 1 — Initial Setup (Task ID: 1)
+- Cloned repo, installed 902 deps, pushed Prisma schema, started dev server
+- Verified page renders correctly via agent-browser
+- Sticky footer, dark theme, grain texture background
+- All API routes functional: /api/jobs, /api/stats, /api/search
 
 ## Unresolved Issues or Risks, Next Phase Priority
-- **Pipeline mini-service (port 3001) not started**: Requires Python dependencies (edge-tts, ultralytics, torch, etc.) — needed for actual video generation jobs
-- **Dev server stability**: Process occasionally dies in sandbox; needs `bun run dev` restart between bash calls
-- **No test data**: Database is empty — no jobs to display in history; stats bar shows welcome message
-- **Socket.io disconnected**: Expected since pipeline-service isn't running; ConnectionIndicator shows Offline
-- **Search history minor**: localStorage history chips only show when input is focused AND empty AND no search results displayed — works correctly but edge case
+- **Pipeline mini-service (port 3001) not started**: Requires Python dependencies (edge-tts, ultralytics, torch, etc.)
+- **Dev server stability**: Process occasionally dies in sandbox; needs `bun run dev` restart
+- **No test data**: Database is empty — no jobs to display in history
+- **Socket.io disconnected**: Expected since pipeline-service isn't running
 - **Priority recommendations**: 
   1. Start pipeline-service mini-service for full pipeline demo
   2. Add sample/demo job data to database so job history and stats are populated
   3. Improve dev server stability (keep-alive script or process manager)
   4. Add more visual polish to manga-config and job-progress views
-  5. Add theme toggle (dark/light mode) since next-themes is already installed
+
+ 5. Add more advanced features: export/import settings, batch job queue, notification system
 
 ---
 Task ID: 2
@@ -67,20 +77,32 @@ Agent: webDevReview Agent
 Task: Enhanced UI features — connection indicator, keyboard shortcuts, search history, animated counters, gradient animations, interactive how-it-works
 
 Work Log:
-- Read all existing source files: page.tsx, search-section.tsx, stats-bar.tsx, how-it-works.tsx, trending-searches.tsx, faq.tsx, job-history.tsx, globals.css, UI components, hooks, and types
-- Added new CSS animations to globals.css: gradient-slide, shimmer, bounce-in, glow-border, blink, icon-bounce
-- Created new ConnectionIndicator component at /src/components/pipeline/connection-indicator.tsx with green/red pulsing dot, Wifi/WifiOff icons, and Tooltip
-- Enhanced page.tsx: added ConnectionIndicator (shown when not in search view), keyboard shortcuts popover (Keyboard icon, `/` and `Esc` shortcuts), animated gradient line below header (2px with gradient-slide animation), back-to-top floating button (ChevronUp, appears on scroll in search view with animate-fade-in-up), passed onClearResults prop to SearchSection
-- Enhanced search-section.tsx: converted to forwardRef with imperative handle (clearResults), added search history (localStorage, max 5, chip display when input focused+empty, individual X to remove, "Clear history" button), clear results button (X icon next to source filters), result count summary ("Found X results from Y sources in Z seconds"), content rating badges (colored dots on result cards), manga status badges (Ongoing/Completed/Hiatus below title), Esc shortcut support
-- Enhanced how-it-works.tsx: added horizontal animated gradient connector lines between steps on desktop, vertical connecting lines on mobile, hover micro-interactions (icon bounce animation + glow border shadow), click-to-expand interaction (ChevronDown indicator, expanded details), step number badge with gradient background
-- Enhanced trending-searches.tsx: added alternating Flame/Sparkles icons next to each title, pulse animation on TrendingUp icon, gradient border glow effect on hover pills
-- Enhanced stats-bar.tsx: welcome message when no jobs exist ("No videos created yet — search for a manhwa above to get started!"), animated counter effect (numbers count up from 0 using requestAnimationFrame with ease-out cubic), shimmer/skeleton loading state while fetching stats using shadcn Skeleton component
-- Ran `bun run lint` — passed clean with 0 errors (fixed react-hooks/refs and react-hooks/set-state-in-effect lint issues in AnimatedCounter)
+- Created ConnectionIndicator component with green/red pulsing dot, Wifi/WifiOff icons, Tooltip
+- Enhanced page.tsx: ConnectionIndicator, keyboard shortcuts popover, animated gradient header line, back-to-top button
+- Enhanced search-section.tsx: forwardRef, search history (localStorage), clear results, result count summary, content rating/status badges
+- Enhanced how-it-works.tsx: gradient connectors, hover bounce, click-to-expand
+- Enhanced trending-searches.tsx: Flame/Sparkles icons, pulse animation, gradient glow
+- Enhanced stats-bar.tsx: welcome message, animated counter, shimmer loading
+- Added 6 CSS animations to globals.css
 
 Stage Summary:
-- 7 files modified, 1 new component created
-- All new features are responsive (mobile-first with sm/md/lg breakpoints)
-- Dark theme with amber accent preserved throughout (oklch color space)
-- Only shadcn/ui components and lucide-react icons used
-- No existing functionality broken — all original features preserved
-- Lint: 0 errors
+- 7 files modified, 1 new component, lint: 0 errors
+
+---
+Task ID: 3
+Agent: webDevReview Agent (Round 3)
+Task: Theme toggle, settings dialog, FAQ icons, hero glow orbs, section dividers, footer enhancement, job history empty state, stats sparklines
+
+Work Log:
+- Created providers.tsx (ThemeProvider from next-themes), updated layout.tsx (removed hardcoded dark, wrapped in Providers)
+- Updated globals.css: split into :root (light) and .dark variables, theme-aware bg-grain/text-gradient, 3 float-orb keyframes
+- Updated page.tsx: theme toggle (Sun/Moon), Settings dialog button, 3 Section dividers, enhanced footer with tech badges
+- Created settings-dialog.tsx: Dialog with voice/chapter/language/API keys/auto-archive, loads/saves via /api/settings
+- Updated faq.tsx: 10 unique icons, colored left border, parseMarkdown() for **bold** and `code`, max-height transition
+- Updated search-section.tsx: 3 floating glow orbs behind hero title
+- Updated job-history.tsx: empty state with Film icon when no jobs
+- Updated stats-bar.tsx: proportional background bars behind stat numbers
+
+Stage Summary:
+- 8 files modified, 2 new files created (providers.tsx, settings-dialog.tsx)
+- Light/dark theme fully functional, lint: 0 errors

@@ -109,7 +109,34 @@ export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
     }
   };
 
-  if (!loading && jobs.length === 0) return null;
+  if (!loading && jobs.length === 0) {
+    return (
+      <section className="max-w-5xl mx-auto">
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition w-full group"
+        >
+          <div className="p-1.5 rounded-lg bg-muted/50 group-hover:bg-muted transition">
+            <History className="h-4 w-4" />
+          </div>
+          Recent jobs
+          <ChevronRight className={`h-4 w-4 ml-auto transition-transform ${open ? "rotate-90" : ""}`}
+          />
+        </button>
+        <div className="flex flex-col items-center justify-center py-12 space-y-3 animate-fade-in-up">
+          <div className="p-4 rounded-full bg-muted/50 border border-border">
+            <Film className="h-8 w-8 text-muted-foreground/40" />
+          </div>
+          <div className="text-center space-y-1">
+            <p className="text-sm font-medium text-muted-foreground">No jobs yet</p>
+            <p className="text-xs text-muted-foreground/60">
+              Search for a manhwa above to create your first recap video
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   const completedCount = jobs.filter((j) => j.status === "done").length;
 

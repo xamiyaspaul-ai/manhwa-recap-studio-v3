@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
-import { Github, Zap, Keyboard, ChevronUp } from "lucide-react";
+import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { Github, Zap, Keyboard, ChevronUp, Sun, Moon } from "lucide-react";
+import { useTheme } from "next-themes";
 import {
   Popover,
   PopoverTrigger,
   PopoverContent,
 } from "@/components/ui/popover";
+import { Separator } from "@/components/ui/separator";
 import { SearchSection } from "@/components/pipeline/search-section";
 import { MangaConfig } from "@/components/pipeline/manga-config";
 import { JobProgress } from "@/components/pipeline/job-progress";
@@ -16,6 +18,7 @@ import { StatsBar } from "@/components/pipeline/stats-bar";
 import { TrendingSearches } from "@/components/pipeline/trending-searches";
 import { FAQ } from "@/components/pipeline/faq";
 import { ConnectionIndicator } from "@/components/pipeline/connection-indicator";
+import { SettingsDialog } from "@/components/pipeline/settings-dialog";
 import { useJobProgress } from "@/hooks/use-job-progress";
 import type { MangadexManga } from "@/types/pipeline";
 
@@ -26,6 +29,8 @@ const SHORTCUTS = [
   { key: "Esc", desc: "Clear search results" },
 ];
 
+const TECH_BADGES = ["Next.js", "Tailwind CSS", "Prisma", "Framer Motion", "Socket.IO"];
+
 export default function Home() {
   const [view, setView] = useState<View>("search");
   const [selectedManga, setSelectedManga] = useState<MangadexManga | null>(null);
@@ -34,6 +39,14 @@ export default function Home() {
   const [trendingQuery, setTrendingQuery] = useState<string | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const { theme, setTheme } = useTheme();
+
+  // Hydration-safe client-only check
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
 
   const mainRef = useRef<HTMLDivElement>(null);
   const searchSectionRef = useRef<{ clearResults: () => void } | null>(null);
@@ -74,7 +87,6 @@ export default function Home() {
   // Keyboard shortcuts: "/" focuses search, "Esc" clears results
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Don't trigger if user is typing in an input/textarea
       const tag = (e.target as HTMLElement).tagName;
       const isTyping = tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement).isContentEditable;
 
@@ -110,6 +122,10 @@ export default function Home() {
     mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
+  const toggleTheme = useCallback(() => {
+    setTheme(theme === "dark" ? "light" : "dark");
+  }, [theme, setTheme]);
+
   return (
     <div className="min-h-screen flex flex-col bg-background bg-grain">
       {/* Header */}
@@ -129,6 +145,9 @@ export default function Home() {
           <div className="flex items-center gap-2 sm:gap-3">
             {/* Connection indicator — only shown when not in search view */}
             {view !== "search" && <ConnectionIndicator connected={connected} />}
+
+            {/* Settings dialog button */}
+            <SettingsDialog />
 
             {/* Keyboard shortcut helper */}
             <Popover open={shortcutsOpen} onOpenChange={setShortcutsOpen}>
@@ -156,6 +175,22 @@ export default function Home() {
                 </div>
               </PopoverContent>
             </Popover>
+
+            {/* Theme toggle */}
+            {mounted && (
+              <button
+                onClick={toggleTheme}
+                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
+                aria-label="Toggle theme"
+              >
+                <Sun
+                  className={`h-4 w-4 transition-all duration-300 ${theme === "dark" ? "rotate-0 scale-100" : "rotate-90 scale-0 absolute"}`}
+                />
+                <Moon
+                  className={`h-4 w-4 transition-all duration-300 ${theme === "dark" ? "-rotate-90 scale-0 absolute" : "rotate-0 scale-100"}`}
+                />
+              </button>
+            )}
 
             <a
               href="https://github.com/zainrana558/manhwa-recap-studio-v3"
@@ -191,9 +226,12 @@ export default function Home() {
               externalQuery={trendingQuery}
               onClearResults={handleClearResults}
             />
+            <Separator className="max-w-4xl mx-auto opacity-30" />
             <TrendingSearches onPick={handleTrendingPick} />
             <HowItWorks />
+            <Separator className="max-w-4xl mx-auto opacity-30" />
             <JobHistory onSelectJob={handleSelectHistoryJob} refreshKey={historyRefresh} />
+            <Separator className="max-w-4xl mx-auto opacity-30" />
             <FAQ />
           </div>
         )}
@@ -230,31 +268,53 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="mt-auto border-t border-border bg-background/50">
-        <div className="max-w-6xl mx-auto px-4 py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted-foreground">
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground/60">Powered by</span>
-            <a href="https://asurascans.com" target="_blank" rel="noopener noreferrer" className="text-foreground/80 hover:text-primary transition">
-              AsuraScans
-            </a>
-            <span className="text-muted-foreground/40">·</span>
-            <a href="https://groq.com" target="_blank" rel="noopener noreferrer" className="text-foreground/80 hover:text-primary transition">
-              Groq
-            </a>
-            <span className="text-muted-foreground/40">·</span>
-            <span className="text-muted-foreground/80">VLM · edge-tts · ffmpeg · YOLO</span>
+        <div className="max-w-6xl mx-auto px-4 py-8 space-y-4">
+          {/* Technology badges */}
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {TECH_BADGES.map((badge) => (
+              <span
+                key={badge}
+                className="bg-card border border-border rounded-full px-2.5 py-0.5 text-[10px] text-muted-foreground font-medium"
+              >
+                {badge}
+              </span>
+            ))}
           </div>
-          <div className="flex items-center gap-3">
-            <a
-              href="https://github.com/zainrana558/manhwa-recap-studio-v3"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1 text-muted-foreground hover:text-foreground transition"
-            >
-              <Github className="h-3 w-3" />
-              <span>GitHub</span>
-            </a>
-            <span className="text-muted-foreground/40">·</span>
-            <span>For personal use only</span>
+
+          <Separator className="max-w-4xl mx-auto opacity-30" />
+
+          {/* Tagline */}
+          <p className="text-center text-xs text-muted-foreground">
+            Built for manhwa fans
+          </p>
+
+          {/* Links */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground/60">Powered by</span>
+              <a href="https://asurascans.com" target="_blank" rel="noopener noreferrer" className="text-foreground/80 hover:text-primary transition">
+                AsuraScans
+              </a>
+              <span className="text-muted-foreground/40">·</span>
+              <a href="https://groq.com" target="_blank" rel="noopener noreferrer" className="text-foreground/80 hover:text-primary transition">
+                Groq
+              </a>
+              <span className="text-muted-foreground/40">·</span>
+              <span className="text-muted-foreground/80">VLM · edge-tts · ffmpeg · YOLO</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <a
+                href="https://github.com/zainrana558/manhwa-recap-studio-v3"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 text-muted-foreground hover:text-foreground transition"
+              >
+                <Github className="h-3 w-3" />
+                <span>GitHub</span>
+              </a>
+              <span className="text-muted-foreground/40">·</span>
+              <span>For personal use only</span>
+            </div>
           </div>
         </div>
       </footer>
