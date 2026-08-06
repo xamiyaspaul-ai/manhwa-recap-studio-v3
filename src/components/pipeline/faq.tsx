@@ -17,6 +17,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useSectionObserver } from "@/hooks/use-section-observer";
 
 interface FAQItem {
   question: string;
@@ -171,12 +172,18 @@ function parseMarkdown(text: string): (string | JSX.Element)[] {
 
 export function FAQ() {
   const [openIndex, setOpenIndex] = useState<number | null>(0);
+  const { ref, isVisible } = useSectionObserver(0.05);
 
   return (
-    <section className="max-w-3xl mx-auto space-y-4">
+    <section ref={ref} className={`max-w-3xl mx-auto space-y-4 transition-all duration-700 ${isVisible ? "animate-section-in" : "opacity-0"}`}>
       <div className="flex items-center gap-2">
-        <HelpCircle className="h-5 w-5 text-primary" />
-        <h2 className="text-xl font-bold">Frequently Asked Questions</h2>
+        <div className="p-1.5 rounded-lg bg-primary/10">
+          <HelpCircle className="h-5 w-5 text-primary" />
+        </div>
+        <div>
+          <h2 className="text-xl font-bold">Frequently Asked Questions</h2>
+          <p className="text-xs text-muted-foreground/60 mt-0.5">Everything you need to know about the pipeline</p>
+        </div>
       </div>
       <div className="space-y-2">
         {FAQ_ITEMS.map((item, i) => {

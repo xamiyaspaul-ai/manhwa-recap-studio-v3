@@ -138,7 +138,7 @@ export function SettingsDialog() {
       <button
         onClick={() => setOpen(true)}
         className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-        aria-label="Settings"
+        aria-label="Open settings"
       >
         <Settings className="h-4 w-4" />
       </button>

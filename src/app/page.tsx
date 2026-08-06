@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
-import { Github, Zap, Keyboard, ChevronUp, Sun, Moon } from "lucide-react";
+import { Github, Zap, Keyboard, ChevronUp, Sun, Moon, Heart, Twitter } from "lucide-react";
 import { useTheme } from "next-themes";
 import {
   Popover,
@@ -19,7 +19,12 @@ import { TrendingSearches } from "@/components/pipeline/trending-searches";
 import { FAQ } from "@/components/pipeline/faq";
 import { ConnectionIndicator } from "@/components/pipeline/connection-indicator";
 import { SettingsDialog } from "@/components/pipeline/settings-dialog";
+import { FeaturesGrid } from "@/components/pipeline/features-grid";
+import { BookmarksSection } from "@/components/pipeline/bookmarks-section";
+import { OnboardingTour } from "@/components/pipeline/onboarding-tour";
 import { useJobProgress } from "@/hooks/use-job-progress";
+import { useScrollProgress } from "@/hooks/use-section-observer";
+import { useBookmarks } from "@/hooks/use-bookmarks";
 import type { MangadexManga } from "@/types/pipeline";
 
 type View = "search" | "config" | "job";
@@ -27,9 +32,10 @@ type View = "search" | "config" | "job";
 const SHORTCUTS = [
   { key: "/", desc: "Focus search" },
   { key: "Esc", desc: "Clear search results" },
+  { key: "B", desc: "Toggle bookmarks" },
 ];
 
-const TECH_BADGES = ["Next.js", "Tailwind CSS", "Prisma", "Framer Motion", "Socket.IO"];
+const TECH_BADGES = ["Next.js 16", "Tailwind CSS 4", "Prisma", "Framer Motion", "Socket.IO", "TypeScript"];
 
 export default function Home() {
   const [view, setView] = useState<View>("search");
@@ -39,7 +45,10 @@ export default function Home() {
   const [trendingQuery, setTrendingQuery] = useState<string | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [showBookmarks, setShowBookmarks] = useState(false);
   const { theme, setTheme } = useTheme();
+  const scrollProgress = useScrollProgress();
+  const { isBookmarked, toggleBookmark } = useBookmarks();
 
   // Hydration-safe client-only check
   const mounted = useSyncExternalStore(
@@ -84,7 +93,11 @@ export default function Home() {
     setTrendingQuery(null);
   }, []);
 
-  // Keyboard shortcuts: "/" focuses search, "Esc" clears results
+  const handleBookmarkToggle = useCallback((manga: MangadexManga) => {
+    toggleBookmark(manga);
+  }, [toggleBookmark]);
+
+  // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
@@ -101,16 +114,20 @@ export default function Home() {
       if (e.key === "Escape" && view === "search" && !isTyping) {
         searchSectionRef.current?.clearResults();
       }
+
+      if (e.key === "b" && view === "search" && !isTyping) {
+        e.preventDefault();
+        setShowBookmarks((v) => !v);
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [view]);
 
-  // Back-to-top button visibility
+  // Scroll detection for back-to-top
   useEffect(() => {
     const container = mainRef.current;
     if (!container) return;
-
     const handleScroll = () => {
       setShowScrollTop(container.scrollTop > 400);
     };
@@ -128,11 +145,27 @@ export default function Home() {
 
   return (
     <div className="min-h-screen flex flex-col bg-background bg-grain">
+      {/* Onboarding tour */}
+      <OnboardingTour />
+
       {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-md">
+      <header className="sticky top-0 z-40 border-b border-border glass">
+        {/* Scroll progress bar */}
+        <div className="absolute inset-x-0 top-0 h-[2px]">
+          <div
+            className="h-full transition-all duration-150 ease-out"
+            style={{
+              width: `${scrollProgress * 100}%`,
+              background: "linear-gradient(90deg, oklch(0.78 0.17 65), oklch(0.72 0.18 45), oklch(0.85 0.15 75))",
+              backgroundSize: "200% 100%",
+              animation: "progress-shimmer 3s linear infinite",
+            }}
+          />
+        </div>
+
         <div className="max-w-6xl mx-auto flex items-center justify-between px-4 py-3">
           <button onClick={handleNewJob} className="flex items-center gap-2 group">
-            <div className="p-1.5 rounded-md bg-primary/10 group-hover:bg-primary/20 transition">
+            <div className="p-1.5 rounded-md bg-primary/10 group-hover:bg-primary/20 transition-all duration-300 group-hover:shadow-md group-hover:shadow-primary/10">
               <Zap className="h-5 w-5 text-primary" />
             </div>
             <div className="flex items-center gap-2">
@@ -142,7 +175,7 @@ export default function Home() {
               </span>
             </div>
           </button>
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             {/* Connection indicator — only shown when not in search view */}
             {view !== "search" && <ConnectionIndicator connected={connected} />}
 
@@ -159,19 +192,24 @@ export default function Home() {
                   <Keyboard className="h-4 w-4" />
                 </button>
               </PopoverTrigger>
-              <PopoverContent side="bottom" align="end" className="w-56 p-3 space-y-2">
+              <PopoverContent side="bottom" align="end" className="w-64 p-3 space-y-3">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                   Shortcuts
                 </p>
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   {SHORTCUTS.map((s) => (
                     <div key={s.key} className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">{s.desc}</span>
+                      <span className="text-muted-foreground text-xs">{s.desc}</span>
                       <kbd className="px-1.5 py-0.5 rounded border border-border bg-muted text-foreground/80 font-mono text-[10px]">
                         {s.key}
                       </kbd>
                     </div>
                   ))}
+                </div>
+                <div className="pt-1 border-t border-border">
+                  <p className="text-[10px] text-muted-foreground/60 leading-relaxed">
+                    Bookmarks are saved locally. Press <kbd className="px-1 py-0.5 rounded border border-border bg-muted font-mono text-[9px]">B</kbd> to toggle.
+                  </p>
                 </div>
               </PopoverContent>
             </Popover>
@@ -180,7 +218,7 @@ export default function Home() {
             {mounted && (
               <button
                 onClick={toggleTheme}
-                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
+                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all duration-300"
                 aria-label="Toggle theme"
               >
                 <Sun
@@ -203,15 +241,6 @@ export default function Home() {
             </a>
           </div>
         </div>
-        {/* Animated gradient line below header */}
-        <div
-          className="h-[2px] w-full"
-          style={{
-            background: "linear-gradient(90deg, transparent, oklch(0.78 0.17 65), oklch(0.72 0.18 45), oklch(0.78 0.17 65), transparent)",
-            backgroundSize: "200% 100%",
-            animation: "gradient-slide 3s linear infinite",
-          }}
-        />
       </header>
 
       {/* Main */}
@@ -225,10 +254,20 @@ export default function Home() {
               onSelectManga={handleSelectManga}
               externalQuery={trendingQuery}
               onClearResults={handleClearResults}
+              isBookmarked={isBookmarked}
+              onBookmarkToggle={handleBookmarkToggle}
             />
             <Separator className="max-w-4xl mx-auto opacity-30" />
+
+            {/* Bookmarks toggle + section */}
+            {showBookmarks && (
+              <BookmarksSection onSelectManga={handleSelectManga} />
+            )}
+
             <TrendingSearches onPick={handleTrendingPick} />
             <HowItWorks />
+            <Separator className="max-w-4xl mx-auto opacity-30" />
+            <FeaturesGrid />
             <Separator className="max-w-4xl mx-auto opacity-30" />
             <JobHistory onSelectJob={handleSelectHistoryJob} refreshKey={historyRefresh} />
             <Separator className="max-w-4xl mx-auto opacity-30" />
@@ -256,39 +295,68 @@ export default function Home() {
       </main>
 
       {/* Back to top floating button */}
-      {showScrollTop && view === "search" && (
+      <div
+        className={`fixed bottom-20 right-6 z-30 transition-all duration-300 ${showScrollTop && view === "search" ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"}`}
+      >
         <button
           onClick={scrollToTop}
-          className="fixed bottom-20 right-6 z-30 p-2.5 rounded-full bg-primary/90 text-primary-foreground shadow-lg hover:bg-primary transition-all animate-fade-in-up"
+          className="p-2.5 rounded-full bg-primary/90 text-primary-foreground shadow-lg hover:bg-primary hover:shadow-xl hover:shadow-primary/20 transition-all active:scale-95"
           aria-label="Back to top"
         >
           <ChevronUp className="h-5 w-5" />
         </button>
-      )}
+      </div>
 
       {/* Footer */}
       <footer className="mt-auto border-t border-border bg-background/50">
-        <div className="max-w-6xl mx-auto px-4 py-8 space-y-4">
+        <div className="max-w-6xl mx-auto px-4 py-8 space-y-5">
+          {/* Brand section */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-md bg-primary/10">
+                <Zap className="h-4 w-4 text-primary" />
+              </div>
+              <span className="font-bold text-sm">Manhwa Recap Studio</span>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-primary/10 text-primary/80 border border-primary/20">
+                v3
+              </span>
+            </div>
+
+            {/* Social links */}
+            <div className="flex items-center gap-3">
+              <a
+                href="https://github.com/zainrana558/manhwa-recap-studio-v3"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition"
+                aria-label="GitHub"
+              >
+                <Github className="h-4 w-4" />
+              </a>
+              <span className="text-muted-foreground/30">|</span>
+              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                Built with <Heart className="h-3 w-3 text-rose-400 inline" /> for manhwa fans
+              </span>
+            </div>
+          </div>
+
+          <Separator className="opacity-30" />
+
           {/* Technology badges */}
           <div className="flex flex-wrap items-center justify-center gap-2">
             {TECH_BADGES.map((badge) => (
               <span
                 key={badge}
-                className="bg-card border border-border rounded-full px-2.5 py-0.5 text-[10px] text-muted-foreground font-medium"
+                className="bg-card border border-border rounded-full px-2.5 py-0.5 text-[10px] text-muted-foreground font-medium hover:border-primary/30 hover:text-foreground transition-colors cursor-default"
               >
                 {badge}
               </span>
             ))}
           </div>
 
-          <Separator className="max-w-4xl mx-auto opacity-30" />
+          <Separator className="opacity-20" />
 
-          {/* Tagline */}
-          <p className="text-center text-xs text-muted-foreground">
-            Built for manhwa fans
-          </p>
-
-          {/* Links */}
+          {/* Bottom links */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted-foreground">
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground/60">Powered by</span>
@@ -300,19 +368,9 @@ export default function Home() {
                 Groq
               </a>
               <span className="text-muted-foreground/40">·</span>
-              <span className="text-muted-foreground/80">VLM · edge-tts · ffmpeg · YOLO</span>
+              <span className="text-foreground/80">VLM · edge-tts · ffmpeg · YOLO</span>
             </div>
             <div className="flex items-center gap-3">
-              <a
-                href="https://github.com/zainrana558/manhwa-recap-studio-v3"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1 text-muted-foreground hover:text-foreground transition"
-              >
-                <Github className="h-3 w-3" />
-                <span>GitHub</span>
-              </a>
-              <span className="text-muted-foreground/40">·</span>
               <span>For personal use only</span>
             </div>
           </div>

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Search, ScanLine, Eye, Scissors, Clapperboard, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useSectionObserver } from "@/hooks/use-section-observer";
 
 const STEPS = [
   {
@@ -40,9 +41,10 @@ const STEPS = [
 export function HowItWorks() {
   const [expandedStep, setExpandedStep] = useState<number | null>(null);
   const [hoveredStep, setHoveredStep] = useState<number | null>(null);
+  const { ref, isVisible } = useSectionObserver(0.1);
 
   return (
-    <section className="max-w-6xl mx-auto py-8">
+    <section ref={ref} className={`max-w-6xl mx-auto py-8 transition-all duration-700 ${isVisible ? "animate-section-in" : "opacity-0"}`}>
       <div className="text-center mb-8">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
           How it works

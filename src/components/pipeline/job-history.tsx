@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { History, ChevronRight, Loader2, CheckCircle2, AlertCircle, Clock, XCircle, Trash2, Film, Cloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useSectionObserver } from "@/hooks/use-section-observer";
 import type { JobSummary, JobStatus } from "@/types/pipeline";
 
 interface JobHistoryProps {
@@ -71,6 +72,7 @@ export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const { ref, isVisible } = useSectionObserver(0.05);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,7 +113,7 @@ export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
 
   if (!loading && jobs.length === 0) {
     return (
-      <section className="max-w-5xl mx-auto">
+      <section ref={ref} className={`max-w-5xl mx-auto transition-all duration-700 ${isVisible ? "animate-section-in" : "opacity-0"}`}>
         <button
           onClick={() => setOpen((o) => !o)}
           className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition w-full group"
@@ -141,7 +143,7 @@ export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
   const completedCount = jobs.filter((j) => j.status === "done").length;
 
   return (
-    <section className="max-w-5xl mx-auto">
+    <section ref={ref} className={`max-w-5xl mx-auto transition-all duration-700 ${isVisible ? "animate-section-in" : "opacity-0"}`}>
       <button
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition w-full group"

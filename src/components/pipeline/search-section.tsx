@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useCallback, useMemo, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
-import { Search, Loader2, Sparkles, ExternalLink, X, Clock } from "lucide-react";
+import { Search, Loader2, Sparkles, ExternalLink, X, Clock, Bookmark, BookmarkCheck } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import { useSectionObserver } from "@/hooks/use-section-observer";
 import type { MangadexManga, MangaSource } from "@/types/pipeline";
 
 interface SearchSectionProps {
@@ -12,6 +13,8 @@ interface SearchSectionProps {
   onSelectManga: (manga: MangadexManga) => void;
   externalQuery?: string | null;
   onClearResults?: () => void;
+  isBookmarked?: (mangaId: string) => boolean;
+  onBookmarkToggle?: (manga: MangadexManga) => void;
 }
 
 export interface SearchSectionHandle {
@@ -20,29 +23,23 @@ export interface SearchSectionHandle {
 
 type SourceFilter = "all" | MangaSource;
 
-const SOURCE_FILTERS: { value: SourceFilter; label: string }[] = [
-  { value: "all", label: "All Sources" },
-  { value: "mangahere", label: "MangaHere" },
-  { value: "fanfox", label: "FanFox" },
-  { value: "webtoons", label: "Webtoons" },
-  { value: "asurascans", label: "AsuraScans" },
-  { value: "mal", label: "MAL" },
-  { value: "anilist", label: "AniList" },
+const SOURCE_FILTERS: { value: SourceFilter; label: string; color: string }[] = [
+  { value: "all", label: "All Sources", color: "" },
+  { value: "mangahere", label: "MangaHere", color: "text-emerald-400" },
+  { value: "fanfox", label: "FanFox", color: "text-orange-400" },
+  { value: "webtoons", label: "Webtoons", color: "text-green-400" },
+  { value: "asurascans", label: "AsuraScans", color: "text-rose-400" },
+  { value: "mal", label: "MAL", color: "text-sky-400" },
+  { value: "anilist", label: "AniList", color: "text-fuchsia-400" },
 ];
 
-/** Tailwind class strings for each source badge (used in result cards). */
 const SOURCE_BADGE_CLASSES: Record<MangaSource, string> = {
-  mangahere:
-    "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
-  fanfox:
-    "bg-orange-500/15 text-orange-300 border-orange-500/30",
-  webtoons:
-    "bg-green-500/15 text-green-300 border-green-500/30",
-  asurascans:
-    "bg-rose-500/15 text-rose-300 border-rose-500/30",
+  mangahere: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
+  fanfox: "bg-orange-500/15 text-orange-300 border-orange-500/30",
+  webtoons: "bg-green-500/15 text-green-300 border-green-500/30",
+  asurascans: "bg-rose-500/15 text-rose-300 border-rose-500/30",
   mal: "bg-sky-500/15 text-sky-300 border-sky-500/30",
-  anilist:
-    "bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30",
+  anilist: "bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30",
 };
 
 const SOURCE_LABEL: Record<MangaSource, string> = {
@@ -54,7 +51,6 @@ const SOURCE_LABEL: Record<MangaSource, string> = {
   anilist: "AniList",
 };
 
-/** Content rating badge colors */
 const CONTENT_RATING_CLASSES: Record<string, string> = {
   safe: "bg-emerald-500",
   suggestive: "bg-amber-500",
@@ -65,12 +61,29 @@ const CONTENT_RATING_LABEL: Record<string, string> = {
   suggestive: "Suggestive",
 };
 
-/** Manga status badge colors */
 const STATUS_BADGE_CLASSES: Record<string, string> = {
   ongoing: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
   completed: "bg-sky-500/15 text-sky-400 border-sky-500/30",
   hiatus: "bg-amber-500/15 text-amber-400 border-amber-500/30",
   cancelled: "bg-rose-500/15 text-rose-400 border-rose-500/30",
+};
+
+const GENRE_ICONS: Record<string, string> = {
+  "Action": "⚔️",
+  "Adventure": "🗺️",
+  "Fantasy": "🔮",
+  "Romance": "💕",
+  "Comedy": "😂",
+  "Drama": "🎭",
+  "Horror": "👻",
+  "Sci-Fi": "🚀",
+  "Slice of Life": "☕",
+  "Mystery": "🔍",
+  "Supernatural": "✨",
+  "Thriller": "😱",
+  "Martial Arts": "🥋",
+  "Isekai": "🌀",
+  "School Life": "📚",
 };
 
 interface SourceCounts {
@@ -98,14 +111,13 @@ function getSearchHistory(): string[] {
 function setSearchHistory(items: string[]) {
   try {
     localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(items.slice(0, MAX_HISTORY)));
-  } catch {
-    // localStorage may be unavailable
-  }
+  } catch {}
 }
 
 const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
-  function SearchSection({ onResults, onSelectManga, externalQuery, onClearResults }, ref) {
+  function SearchSection({ onResults, onSelectManga, externalQuery, onClearResults, isBookmarked, onBookmarkToggle }, ref) {
     const { toast } = useToast();
+    const { ref: sectionRef, isVisible } = useSectionObserver(0.05);
     const [query, setQuery] = useState("");
     const [loading, setLoading] = useState(false);
     const [resolvingId, setResolvingId] = useState<string | null>(null);
@@ -117,14 +129,13 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
     const [searchDuration, setSearchDuration] = useState<number | null>(null);
     const [inputFocused, setInputFocused] = useState(false);
     const [searchHistory, setSearchHistoryState] = useState<string[]>([]);
+    const [poppedBookmark, setPoppedBookmark] = useState<string | null>(null);
     const searchStartTime = useRef<number>(0);
 
-    // Load search history on mount
     useEffect(() => {
       setSearchHistoryState(getSearchHistory());
     }, []);
 
-    // Imperative handle for parent to clear results
     useImperativeHandle(ref, () => ({
       clearResults: () => {
         setResults([]);
@@ -138,7 +149,6 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
       },
     }), [onClearResults]);
 
-    // When a trending pick is clicked, fill the search box and auto-search
     useEffect(() => {
       if (externalQuery) {
         setQuery(externalQuery);
@@ -226,7 +236,6 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
       }
     }, [query, onResults, addToHistory]);
 
-    // Filtered view of results based on the source filter toggle.
     const visibleResults = useMemo(() => {
       if (filter === "all") return results;
       return results.filter((m) => (m.source ?? "mangahere") === filter);
@@ -237,20 +246,10 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
       return Object.values(sourceCounts).filter((c) => c > 0).length;
     }, [sourceCounts]);
 
-    /**
-     * When a user selects a scrapeable result (MangaHere, FanFox, Webtoons),
-     * proceed straight to the config page. For metadata-only results (MAL/AniList),
-     * we re-search MangaHere by title to find the scrapeable version.
-     */
     const handleSelect = useCallback(
       async (m: MangadexManga) => {
         const source = m.source ?? "mangahere";
-        if (
-          source === "mangahere" ||
-          source === "fanfox" ||
-          source === "webtoons" ||
-          source === "asurascans"
-        ) {
+        if (source === "mangahere" || source === "fanfox" || source === "webtoons" || source === "asurascans") {
           onSelectManga(m);
           return;
         }
@@ -262,9 +261,7 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
         });
 
         try {
-          const res = await fetch(
-            `/api/search?q=${encodeURIComponent(m.title)}&limit=1&source=mangahere`
-          );
+          const res = await fetch(`/api/search?q=${encodeURIComponent(m.title)}&limit=1&source=mangahere`);
           const data = await res.json().catch(() => ({}));
           const mdMatch: MangadexManga | undefined = (data.manga ?? [])[0];
 
@@ -301,11 +298,18 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
       [onSelectManga, toast]
     );
 
+    const handleBookmark = useCallback((e: React.MouseEvent, m: MangadexManga) => {
+      e.stopPropagation();
+      onBookmarkToggle?.(m);
+      setPoppedBookmark(m.id);
+      setTimeout(() => setPoppedBookmark(null), 350);
+    }, [onBookmarkToggle]);
+
     const showHistory = inputFocused && query === "" && searchHistory.length > 0 && !hasSearched;
 
     return (
-      <section className="space-y-6">
-        {/* Hero glow orbs — hidden on mobile */}
+      <section ref={sectionRef} className="space-y-6">
+        {/* Hero with glow orbs */}
         <div className="relative">
           <div className="absolute inset-0 overflow-hidden pointer-events-none">
             <div
@@ -331,23 +335,24 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
             />
           </div>
 
-          <div className="relative text-center space-y-3">
-            <h1 className="text-4xl sm:text-5xl font-bold tracking-tight">
+          <div className={`relative text-center space-y-4 transition-all duration-700 ${isVisible ? "animate-section-in" : "opacity-0"}`}>
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight">
               <span className="text-gradient">Manhwa Recap Studio</span>
             </h1>
-            <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
+            <p className="text-muted-foreground text-base sm:text-lg max-w-2xl mx-auto leading-relaxed">
               Enter any manhwa, manga, or webtoon name. We search{" "}
-              <span className="text-foreground font-medium">MangaHere, FanFox, Webtoons, AsuraScans, MyAnimeList &amp; AniList</span> at once,
-              scrape every single chapter, translate to English, and render a narrated recap video.
+              <span className="text-foreground font-medium">6 sources at once</span>,
+              scrape every chapter, transcribe dialogue with AI, and render a narrated recap video.
             </p>
-            <p className="text-xs text-muted-foreground/60">
-              Press <kbd className="px-1.5 py-0.5 rounded border border-border bg-muted text-foreground/80 font-mono text-[10px]">/</kbd> to focus search
-              {" · "}
-              <kbd className="px-1.5 py-0.5 rounded border border-border bg-muted text-foreground/80 font-mono text-[10px]">Esc</kbd> to clear
+            <p className="text-xs text-muted-foreground/50">
+              Press <kbd className="px-1.5 py-0.5 rounded border border-border bg-muted text-foreground/80 font-mono text-[10px]">/</kbd> to focus{" "}
+              <kbd className="px-1.5 py-0.5 rounded border border-border bg-muted text-foreground/80 font-mono text-[10px]">Esc</kbd> to clear{" "}
+              <kbd className="px-1.5 py-0.5 rounded border border-border bg-muted text-foreground/80 font-mono text-[10px]">B</kbd> bookmarks
             </p>
           </div>
         </div>
 
+        {/* Glassmorphism search bar */}
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -356,7 +361,7 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
           className="flex flex-col sm:flex-row gap-3 max-w-2xl mx-auto"
         >
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
             <Input
               id="search-input"
               value={query}
@@ -364,14 +369,14 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
               onFocus={() => setInputFocused(true)}
               onBlur={() => setTimeout(() => setInputFocused(false), 200)}
               placeholder="e.g. Solo Leveling, Tower of God, One Piece…"
-              className="pl-10 h-12 text-base bg-card border-border"
+              className="pl-11 h-13 text-base bg-card/80 border-border/80 backdrop-blur-sm focus:bg-card transition-all shadow-sm focus:shadow-md focus:shadow-primary/5 rounded-xl"
               autoFocus
             />
           </div>
           <Button
             type="submit"
             size="lg"
-            className="h-12 px-8 font-semibold"
+            className="h-13 px-8 font-semibold rounded-xl shadow-sm hover:shadow-md hover:shadow-primary/10 transition-all"
             disabled={loading || !query.trim()}
           >
             {loading ? (
@@ -433,12 +438,14 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
         )}
 
         {error && (
-          <p className="text-center text-destructive text-sm">{error}</p>
+          <div className="max-w-2xl mx-auto">
+            <p className="text-center text-destructive text-sm bg-destructive/10 border border-destructive/20 rounded-lg py-2 px-4">{error}</p>
+          </div>
         )}
 
         {/* Source filter row + counts + clear results button */}
         {hasSearched && !loading && results.length > 0 && (
-          <div className="flex flex-wrap items-center justify-center gap-2">
+          <div className="flex flex-wrap items-center justify-center gap-1.5 animate-fade-in-up">
             {SOURCE_FILTERS.map((f) => {
               const isActive = filter === f.value;
               const count =
@@ -454,7 +461,7 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
                   size="sm"
                   variant={isActive ? "default" : "outline"}
                   onClick={() => setFilter(f.value)}
-                  className="h-8 px-3 text-xs"
+                  className={`h-8 px-3 text-xs rounded-lg ${!isActive && f.color ? `hover:${f.color} hover:border-current/30` : ""}`}
                 >
                   {f.label}
                   <span
@@ -469,13 +476,12 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
                 </Button>
               );
             })}
-            {/* Clear results button */}
             <Button
               type="button"
               size="sm"
               variant="ghost"
               onClick={handleClearResults}
-              className="h-8 px-2 text-xs text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10"
+              className="h-8 px-2 text-xs text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 rounded-lg"
             >
               <X className="h-3.5 w-3.5 mr-1" />
               Clear
@@ -520,13 +526,19 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
         )}
 
         {visibleResults.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 sm:gap-4">
             {visibleResults.map((m, idx) => {
               const source = m.source ?? "mangahere";
               const isResolving = resolvingId === m.id;
               const isExternal = source === "mal" || source === "anilist";
               const contentRating = m.contentRating ?? "safe";
               const mangaStatus = m.status?.toLowerCase() ?? null;
+              const bookmarked = isBookmarked?.(m.id) ?? false;
+              const isPopped = poppedBookmark === m.id;
+
+              // Pick first 2 genre tags
+              const genreTags = (m.tags ?? []).slice(0, 2);
+
               return (
                 <div
                   key={m.id}
@@ -539,15 +551,15 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
                       handleSelect(m);
                     }
                   }}
-                  className="group text-left space-y-2 transition-all duration-300 hover:scale-[1.05] hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-ring rounded-lg disabled:opacity-60 disabled:hover:scale-100 cursor-pointer animate-fade-in-up"
-                  style={{ animationDelay: `${idx * 30}ms` }}
+                  className="group text-left space-y-2 transition-all duration-300 hover:scale-[1.03] hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-ring rounded-lg disabled:opacity-60 disabled:hover:scale-100 cursor-pointer animate-item-in"
+                  style={{ animationDelay: `${idx * 40}ms` }}
                 >
-                  <div className="aspect-[3/4] rounded-lg overflow-hidden bg-muted border border-border relative group-hover:border-primary/40 transition-colors">
+                  <div className="aspect-[3/4] rounded-xl overflow-hidden bg-muted border border-border relative group-hover:border-primary/40 group-hover:shadow-lg group-hover:shadow-primary/5 transition-all duration-300">
                     {m.coverUrl ? (
                       <img
                         src={m.coverUrl}
                         alt={m.title}
-                        className="w-full h-full object-cover group-hover:scale-105 group-hover:brightness-110 transition-all duration-300"
+                        className="w-full h-full object-cover group-hover:scale-110 group-hover:brightness-110 transition-all duration-500"
                         loading="lazy"
                       />
                     ) : (
@@ -556,18 +568,27 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
                         <span className="text-xs">No cover</span>
                       </div>
                     )}
-                    {/* Source badge (top-left) */}
+                    {/* Source badge */}
                     <span
-                      className={`absolute top-1.5 left-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded border backdrop-blur-sm ${SOURCE_BADGE_CLASSES[source]}`}
+                      className={`absolute top-1.5 left-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-md border backdrop-blur-sm ${SOURCE_BADGE_CLASSES[source]}`}
                     >
                       {isResolving ? "…" : SOURCE_LABEL[source]}
                     </span>
-                    {/* Content rating dot (top-right) */}
+                    {/* Content rating dot */}
                     <span
                       className={`absolute top-1.5 right-1.5 h-2 w-2 rounded-full ${CONTENT_RATING_CLASSES[contentRating] ?? "bg-emerald-500"}`}
                       title={CONTENT_RATING_LABEL[contentRating] ?? contentRating}
                     />
-                    {/* External link hint for non-MangaHere sources */}
+                    {/* Bookmark button */}
+                    <button
+                      type="button"
+                      onClick={(e) => handleBookmark(e, m)}
+                      className={`absolute bottom-1.5 right-1.5 p-1.5 rounded-lg bg-black/50 backdrop-blur-sm text-white/70 hover:text-primary hover:bg-black/70 transition-all z-10 ${bookmarked ? "text-primary" : "opacity-0 group-hover:opacity-100"} ${isPopped ? "animate-bookmark-pop" : ""}`}
+                      aria-label={bookmarked ? `Remove ${m.title} from bookmarks` : `Bookmark ${m.title}`}
+                    >
+                      {bookmarked ? <BookmarkCheck className="h-3.5 w-3.5" /> : <Bookmark className="h-3.5 w-3.5" />}
+                    </button>
+                    {/* External link hint */}
                     {isExternal && m.externalUrl && (
                       <a
                         href={m.externalUrl}
@@ -575,22 +596,31 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
                         rel="noopener noreferrer"
                         onClick={(e) => e.stopPropagation()}
                         className="absolute top-1.5 right-1.5 p-1 rounded bg-black/50 text-white/80 hover:text-white hover:bg-black/70 transition z-10"
-                        aria-label={`View ${SOURCE_LABEL[source]} page (opens new tab)`}
+                        aria-label={`View ${SOURCE_LABEL[source]} page`}
                       >
                         <ExternalLink className="h-3 w-3" />
                       </a>
                     )}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-all duration-300 flex items-end p-2">
+                    {/* Hover overlay */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-300 flex flex-col items-end justify-between p-2">
+                      {/* Genre tags at top */}
+                      <div className="flex flex-wrap gap-1 justify-end">
+                        {genreTags.map((tag) => (
+                          <span key={tag} className="text-[9px] px-1.5 py-0.5 rounded-md bg-black/40 backdrop-blur-sm text-white/80 border border-white/10">
+                            {GENRE_ICONS[tag] ?? ""} {tag}
+                          </span>
+                        ))}
+                      </div>
                       <span className="text-white text-xs font-medium">
                         {isResolving
-                          ? "Finding on MangaDex…"
+                          ? "Finding on MangaHere…"
                           : isExternal
                             ? "Match on MangaDex →"
                             : "Select →"}
                       </span>
                     </div>
                   </div>
-                  <div className="space-y-0.5">
+                  <div className="space-y-1">
                     <p className="text-sm font-medium line-clamp-2 leading-tight group-hover:text-primary transition-colors">
                       {m.title}
                     </p>
@@ -602,10 +632,9 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
                         {m.lastChapter ? ` · Ch.${m.lastChapter}` : ""}
                       </p>
                     </div>
-                    {/* Status badge */}
                     {mangaStatus && STATUS_BADGE_CLASSES[mangaStatus] && (
                       <span
-                        className={`inline-block text-[9px] font-medium px-1.5 py-0.5 rounded border ${STATUS_BADGE_CLASSES[mangaStatus]}`}
+                        className={`inline-block text-[9px] font-medium px-1.5 py-0.5 rounded-md border ${STATUS_BADGE_CLASSES[mangaStatus]}`}
                       >
                         {mangaStatus.charAt(0).toUpperCase() + mangaStatus.slice(1)}
                       </span>
@@ -618,10 +647,11 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
         )}
 
         {hasSearched && !loading && results.length > 0 && (
-          <p className="text-center text-xs text-muted-foreground">
+          <p className="text-center text-xs text-muted-foreground/60">
             {sourceCounts
-              ? `MangaHere: ${sourceCounts.mangahere} · FanFox: ${sourceCounts.fanfox} · Webtoons: ${sourceCounts.webtoons} · AsuraScans: ${sourceCounts.asurascans} · MAL: ${sourceCounts.mal} · AniList: ${sourceCounts.anilist} — metadata-only results (MAL/AniList) are auto-matched to a scrapeable source on selection.`
-              : "Metadata-only results (MAL/AniList) are auto-matched to a scrapeable source on selection."}
+              ? `MangaHere: ${sourceCounts.mangahere} · FanFox: ${sourceCounts.fanfox} · Webtoons: ${sourceCounts.webtoons} · AsuraScans: ${sourceCounts.asurascans} · MAL: ${sourceCounts.mal} · AniList: ${sourceCounts.anilist}`
+              : ""}{" "}
+            — metadata-only results (MAL/AniList) are auto-matched to a scrapeable source on selection.
           </p>
         )}
       </section>
