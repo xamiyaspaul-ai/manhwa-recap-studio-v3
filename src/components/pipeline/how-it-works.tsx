@@ -43,7 +43,7 @@ const STEPS = [
   },
 ];
 
-function StepCard({ s, i, isLast, expandedStep, setExpandedStep, hoveredStep, setHoveredStep }: {
+function StepCard({ s, i, isLast, expandedStep, setExpandedStep, hoveredStep, setHoveredStep, isVisible }: {
   s: typeof STEPS[number];
   i: number;
   isLast: boolean;
@@ -51,19 +51,30 @@ function StepCard({ s, i, isLast, expandedStep, setExpandedStep, hoveredStep, se
   setExpandedStep: (v: number | null) => void;
   hoveredStep: number | null;
   setHoveredStep: (v: number | null) => void;
+  isVisible: boolean;
 }) {
   const Icon = s.icon;
   const isExpanded = expandedStep === i;
   const isHovered = hoveredStep === i;
+  const isActive = isHovered || isExpanded;
+
+  const staggerClasses = [
+    "stagger-1",
+    "stagger-2",
+    "stagger-3",
+    "stagger-4",
+    "stagger-5",
+  ];
 
   return (
     <div className="flex items-stretch flex-1 min-w-0">
       <div
         className={cn(
-          "group p-5 rounded-2xl border space-y-4 relative overflow-hidden transition-all duration-300 flex-1 cursor-pointer",
-          isHovered || isExpanded
+          "group p-5 rounded-2xl border space-y-4 relative overflow-hidden transition-all duration-300 flex-1 cursor-pointer hover-lift hover-glow-sm animate-item-in",
+          isActive
             ? "animate-glow-border bg-card/90 shadow-xl shadow-primary/10 border-primary/30"
-            : "border-border bg-card/40 hover:border-primary/20 hover:bg-card/70 hover:shadow-lg hover:shadow-primary/5"
+            : "border-border bg-card/40 hover:border-primary/20 hover:bg-card/70 hover:shadow-lg hover:shadow-primary/5",
+          isVisible && staggerClasses[i]
         )}
         onMouseEnter={() => setHoveredStep(i)}
         onMouseLeave={() => setHoveredStep(null)}
@@ -77,15 +88,14 @@ function StepCard({ s, i, isLast, expandedStep, setExpandedStep, hoveredStep, se
           }
         }}
       >
-        {/* Top gradient line */}
         <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-primary/40 via-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
 
-        {/* Step number + icon row */}
         <div className="flex items-center justify-between">
           <div
             className={cn(
               "p-2.5 rounded-xl bg-primary/10 group-hover:bg-primary/20 transition-all duration-300",
-              isHovered && "animate-icon-bounce shadow-md shadow-primary/10"
+              isActive && "animate-icon-bounce shadow-md shadow-primary/10",
+              "hover:shadow-lg hover:shadow-primary/20"
             )}
           >
             <Icon className="h-5 w-5 text-primary" />
@@ -95,7 +105,10 @@ function StepCard({ s, i, isLast, expandedStep, setExpandedStep, hoveredStep, se
               {s.duration}
             </span>
             <span
-              className="text-3xl font-bold select-none"
+              className={cn(
+                "text-3xl font-bold select-none",
+                isActive && "border-glow rounded-lg px-1"
+              )}
               style={{
                 background: "linear-gradient(135deg, oklch(0.78 0.17 65 / 0.15), oklch(0.78 0.17 65 / 0.02))",
                 WebkitBackgroundClip: "text",
@@ -108,22 +121,19 @@ function StepCard({ s, i, isLast, expandedStep, setExpandedStep, hoveredStep, se
           </div>
         </div>
 
-        {/* Content */}
-        <div>
+        <div className="relative z-[2]">
           <h3 className="text-sm font-bold mb-1.5 group-hover:text-primary transition-colors">{s.title}</h3>
           <p className="text-xs text-muted-foreground leading-relaxed">{s.desc}</p>
         </div>
 
-        {/* Expanded details */}
         {isExpanded && (
-          <div className="animate-fade-in-up pt-3 border-t border-border/50">
+          <div className="animate-fade-in-up pt-3 border-t border-border/50 relative z-[2]">
             <p className="text-xs text-muted-foreground/80 leading-relaxed">
               {s.details}
             </p>
           </div>
         )}
 
-        {/* Expand indicator */}
         <ChevronDown
           className={cn(
             "h-3 w-3 text-muted-foreground/40 transition-transform duration-200 absolute bottom-4 right-4",
@@ -132,7 +142,6 @@ function StepCard({ s, i, isLast, expandedStep, setExpandedStep, hoveredStep, se
         />
       </div>
 
-      {/* Connector line */}
       {!isLast && (
         <div className="flex items-center px-1.5 flex-shrink-0">
           <div
@@ -154,6 +163,14 @@ export function HowItWorks() {
   const [hoveredStep, setHoveredStep] = useState<number | null>(null);
   const { ref, isVisible } = useSectionObserver(0.1);
 
+  const staggerClasses = [
+    "stagger-1",
+    "stagger-2",
+    "stagger-3",
+    "stagger-4",
+    "stagger-5",
+  ];
+
   return (
     <section ref={ref} className="max-w-6xl mx-auto py-8">
       <div className={`transition-all duration-700 ${isVisible ? "animate-section-in" : "opacity-0"}`}>
@@ -170,7 +187,6 @@ export function HowItWorks() {
           </p>
         </div>
 
-        {/* Desktop: horizontal layout */}
         <div className="hidden lg:flex items-stretch gap-0">
           {STEPS.map((s, i) => (
             <StepCard
@@ -182,20 +198,19 @@ export function HowItWorks() {
               setExpandedStep={setExpandedStep}
               hoveredStep={hoveredStep}
               setHoveredStep={setHoveredStep}
+              isVisible={isVisible}
             />
           ))}
         </div>
 
-        {/* Mobile: vertical layout with timeline */}
         <div className="flex flex-col lg:hidden gap-0 relative">
-          {/* Vertical timeline line */}
           <div className="absolute left-[18px] top-6 bottom-6 w-[2px]">
             <div
-              className="w-full h-full"
+              className="w-full h-full rounded-full"
               style={{
-                background: "linear-gradient(180deg, oklch(0.78 0.17 65 / 0.3), oklch(0.78 0.17 65 / 0.05))",
+                background: "linear-gradient(180deg, oklch(0.78 0.17 65 / 0.4), oklch(0.78 0.17 65 / 0.08))",
                 backgroundSize: "100% 200%",
-                animation: "gradient-slide 2s linear infinite",
+                animation: "gradient-slide 3s linear infinite",
               }}
             />
           </div>
@@ -205,28 +220,28 @@ export function HowItWorks() {
             const isExpanded = expandedStep === i;
             const isHovered = hoveredStep === i;
             const isLast = i === STEPS.length - 1;
+            const isActive = isHovered || isExpanded;
 
             return (
               <div key={s.title} className={cn("flex gap-4", !isLast && "pb-3")}>
-                {/* Timeline dot */}
                 <div className="relative z-10 flex-shrink-0 mt-5">
                   <div className={cn(
                     "w-9 h-9 rounded-xl flex items-center justify-center transition-all duration-300 border",
-                    isHovered || isExpanded
-                      ? "bg-primary/20 border-primary/40 shadow-md shadow-primary/10"
-                      : "bg-card border-border"
+                    isActive
+                      ? "bg-primary/20 border-primary/40 shadow-md shadow-primary/10 border-glow"
+                      : "bg-card border-border hover:shadow-md hover:shadow-primary/10"
                   )}>
                     <Icon className="h-4 w-4 text-primary" />
                   </div>
                 </div>
 
-                {/* Card */}
                 <div
                   className={cn(
-                    "group flex-1 p-4 rounded-xl border space-y-3 relative overflow-hidden transition-all duration-300 cursor-pointer mb-1",
-                    isHovered || isExpanded
+                    "group flex-1 p-4 rounded-xl border space-y-3 relative overflow-hidden transition-all duration-300 cursor-pointer mb-1 hover-lift hover-glow-sm animate-item-in",
+                    isActive
                       ? "animate-glow-border bg-card/90 shadow-lg shadow-primary/5 border-primary/30"
-                      : "border-border bg-card/40 hover:border-primary/20 hover:bg-card/70"
+                      : "border-border bg-card/40 hover:border-primary/20 hover:bg-card/70",
+                    isVisible && staggerClasses[i]
                   )}
                   onMouseEnter={() => setHoveredStep(i)}
                   onMouseLeave={() => setHoveredStep(null)}
@@ -240,7 +255,7 @@ export function HowItWorks() {
                     }
                   }}
                 >
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between relative z-[2]">
                     <h3 className="text-sm font-bold group-hover:text-primary transition-colors">{s.title}</h3>
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] font-mono text-muted-foreground/60 px-2 py-0.5 rounded-md bg-muted/50 border border-border">
@@ -254,9 +269,11 @@ export function HowItWorks() {
                       />
                     </div>
                   </div>
-                  <p className="text-xs text-muted-foreground leading-relaxed">{s.desc}</p>
+                  <div className="relative z-[2]">
+                    <p className="text-xs text-muted-foreground leading-relaxed">{s.desc}</p>
+                  </div>
                   {isExpanded && (
-                    <div className="animate-fade-in-up pt-2 border-t border-border/50">
+                    <div className="animate-fade-in-up pt-2 border-t border-border/50 relative z-[2]">
                       <p className="text-xs text-muted-foreground/80 leading-relaxed">{s.details}</p>
                     </div>
                   )}

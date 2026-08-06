@@ -26,6 +26,10 @@ export interface SearchSectionHandle {
 
 type SourceFilter = "all" | MangaSource;
 
+type StatusFilter = "all" | "ongoing" | "completed" | "hiatus";
+
+type QuickSort = "relevance" | "updated" | "followed" | "title-az";
+
 const SOURCE_FILTERS: { value: SourceFilter; label: string; color: string }[] = [
   { value: "all", label: "All Sources", color: "" },
   { value: "mangahere", label: "MangaHere", color: "text-emerald-400" },
@@ -34,6 +38,20 @@ const SOURCE_FILTERS: { value: SourceFilter; label: string; color: string }[] = 
   { value: "asurascans", label: "AsuraScans", color: "text-rose-400" },
   { value: "mal", label: "MAL", color: "text-sky-400" },
   { value: "anilist", label: "AniList", color: "text-fuchsia-400" },
+];
+
+const STATUS_FILTER_OPTIONS: { value: StatusFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "ongoing", label: "Ongoing" },
+  { value: "completed", label: "Completed" },
+  { value: "hiatus", label: "Hiatus" },
+];
+
+const QUICK_SORT_OPTIONS: { value: QuickSort; label: string }[] = [
+  { value: "relevance", label: "Relevance" },
+  { value: "updated", label: "Recently Updated" },
+  { value: "followed", label: "Most Followed" },
+  { value: "title-az", label: "Title A-Z" },
 ];
 
 const SOURCE_BADGE_CLASSES: Record<MangaSource, string> = {
@@ -134,6 +152,8 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
     const [sourceCounts, setSourceCounts] = useState<SourceCounts | null>(null);
     const [filter, setFilter] = useState<SourceFilter>("all");
     const [sortBy, setSortBy] = useState<SortOption>("relevance");
+    const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+    const [quickSort, setQuickSort] = useState<QuickSort>("relevance");
     const [hasSearched, setHasSearched] = useState(false);
     const [searchDuration, setSearchDuration] = useState<number | null>(null);
     const [inputFocused, setInputFocused] = useState(false);
@@ -143,6 +163,23 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
     const searchStartTime = useRef<number>(0);
     const historyPanelRef = useRef<HTMLDivElement>(null);
     const resultsGridRef = useRef<HTMLDivElement>(null);
+
+    // Check if any results have a source field explicitly set
+    const hasExplicitSource = useMemo(() => {
+      return results.some((m) => m.source !== undefined);
+    }, [results]);
+
+    // Count results by status for filter pills
+    const statusCounts = useMemo(() => {
+      const counts: Record<string, number> = { all: results.length, ongoing: 0, completed: 0, hiatus: 0 };
+      for (const m of results) {
+        const s = m.status?.toLowerCase() ?? "";
+        if (s === "ongoing") counts.ongoing++;
+        else if (s === "completed") counts.completed++;
+        else if (s === "hiatus") counts.hiatus++;
+      }
+      return counts;
+    }, [results]);
 
     // Click outside detection for history panel
     useEffect(() => {
@@ -167,6 +204,8 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
         setError(null);
         setFilter("all");
         setSortBy("relevance");
+        setStatusFilter("all");
+        setQuickSort("relevance");
         setSearchDuration(null);
         setExpandedManga(null);
         onClearResults?.();
@@ -191,6 +230,8 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
       setError(null);
       setFilter("all");
       setSortBy("relevance");
+      setStatusFilter("all");
+      setQuickSort("relevance");
       setSearchDuration(null);
       setExpandedManga(null);
       onClearResults?.();
@@ -240,10 +281,17 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
     }, [query, onResults, addHistory]);
 
     const visibleResults = useMemo(() => {
-      let filtered = filter === "all" ? results : results.filter((m) => (m.source ?? "mangahere") === filter);
-      if (sortBy === "relevance") return filtered;
+      let filtered = filter === "all" ? [...results] : results.filter((m) => (m.source ?? "mangahere") === filter);
+
+      if (statusFilter !== "all") {
+        filtered = filtered.filter((m) => m.status?.toLowerCase() === statusFilter);
+      }
+
+      const activeSort = quickSort !== "relevance" ? quickSort : sortBy;
+
+      if (activeSort === "relevance") return filtered;
       const sorted = [...filtered];
-      switch (sortBy) {
+      switch (activeSort) {
         case "title-az":
           sorted.sort((a, b) => a.title.localeCompare(b.title));
           break;
@@ -259,9 +307,19 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
         case "chapters-desc":
           sorted.sort((a, b) => (b.lastChapter ?? 0) - (a.lastChapter ?? 0));
           break;
+        case "updated":
+          sorted.sort((a, b) => {
+            const tA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+            const tB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+            return tB - tA;
+          });
+          break;
+        case "followed":
+          sorted.sort((a, b) => (b.followedCount ?? 0) - (a.followedCount ?? 0));
+          break;
       }
       return sorted;
-    }, [results, filter, sortBy]);
+    }, [results, filter, sortBy, statusFilter, quickSort]);
 
     const activeSourceCount = useMemo(() => {
       if (!sourceCounts) return 0;
@@ -347,7 +405,6 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
         e.preventDefault();
         setFocusedResultIdx((prev) => {
           const next = prev < visibleResults.length - 1 ? prev + 1 : 0;
-          // Scroll into view
           const grid = resultsGridRef.current;
           if (grid) {
             const items = grid.querySelectorAll<HTMLElement>("[data-result-index]");
@@ -380,7 +437,6 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
         {/* Hero with glow orbs */}
         <div className="relative">
           <div className="absolute inset-0 overflow-hidden pointer-events-none">
-            {/* Orb 1: Amber/warm gradient */}
             <div
               className="hidden lg:block absolute -top-20 left-1/4 w-[300px] h-[300px] rounded-full blur-[80px] opacity-15"
               style={{
@@ -388,7 +444,6 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
                 animation: "float-orb-1 8s ease-in-out infinite",
               }}
             />
-            {/* Orb 2: Orange/amber gradient */}
             <div
               className="hidden lg:block absolute -top-10 right-1/4 w-[250px] h-[250px] rounded-full blur-[80px] opacity-15"
               style={{
@@ -396,7 +451,6 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
                 animation: "float-orb-2 12s ease-in-out infinite",
               }}
             />
-            {/* Orb 3: Rose/amber gradient */}
             <div
               className="hidden lg:block absolute top-10 left-1/2 -translate-x-1/2 w-[200px] h-[200px] rounded-full blur-[80px] opacity-15"
               style={{
@@ -406,7 +460,6 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
             />
           </div>
 
-          {/* Radial gradient backdrop behind title text */}
           <div className="absolute inset-0 overflow-hidden pointer-events-none lg:block hidden">
             <div
               className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[300px] rounded-full opacity-[0.07]"
@@ -574,74 +627,151 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
           </div>
         )}
 
-        {/* Source filter row + sort + counts + clear results button */}
+        {/* Status filter + Quick sort pills */}
         {hasSearched && !loading && results.length > 0 && (
-          <div className="flex flex-wrap items-center justify-center gap-1.5 animate-fade-in-up">
-            {SOURCE_FILTERS.map((f) => {
-              const isActive = filter === f.value;
-              const count =
-                f.value === "all"
-                  ? results.length
-                  : sourceCounts
-                    ? sourceCounts[f.value]
-                    : results.filter((m) => (m.source ?? "mangahere") === f.value).length;
-              return (
-                <Button
-                  key={f.value}
-                  type="button"
-                  size="sm"
-                  variant={isActive ? "default" : "outline"}
-                  onClick={() => setFilter(f.value)}
-                  className={`h-8 px-3 text-xs rounded-lg ${!isActive && f.color ? `hover:${f.color} hover:border-current/30` : ""}`}
-                >
-                  {f.label}
-                  <span
-                    className={`ml-1.5 rounded px-1.5 py-0.5 text-[10px] font-mono ${
-                      isActive
-                        ? "bg-primary-foreground/20 text-primary-foreground"
-                        : "bg-muted text-muted-foreground"
-                    }`}
+          <div className="flex flex-col items-center gap-2 animate-fade-in-up">
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              {STATUS_FILTER_OPTIONS.map((opt) => {
+                const isActive = statusFilter === opt.value;
+                const count = statusCounts[opt.value] ?? 0;
+                return (
+                  <Button
+                    key={opt.value}
+                    type="button"
+                    size="sm"
+                    variant={isActive ? "default" : "outline"}
+                    onClick={() => setStatusFilter(opt.value)}
+                    className="h-7 px-2.5 text-[11px] rounded-lg"
                   >
-                    {count}
-                  </span>
-                </Button>
-              );
-            })}
-            {/* Sort dropdown */}
-            <div className="flex items-center gap-1">
-              <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground/60" />
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as SortOption)}
-                className="h-8 px-2 text-xs bg-muted/50 border border-border rounded-lg text-foreground focus:outline-none focus:ring-1 focus:ring-ring appearance-none cursor-pointer pr-6 bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22currentColor%22%20stroke-width%3D%222%22%3E%3Cpath%20d%3D%22m6%209%206%206%206-6%22%2F%3E%3C%2Fsvg%3E')] bg-[position:right_6px_center] bg-no-repeat"
-                aria-label="Sort results"
+                    {opt.label}
+                    <span
+                      className={`ml-1.5 rounded px-1 py-0.5 text-[9px] font-mono ${
+                        isActive
+                          ? "bg-primary-foreground/20 text-primary-foreground"
+                          : "bg-muted text-muted-foreground"
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  </Button>
+                );
+              })}
+
+              <span className="text-border mx-1">|</span>
+
+              {QUICK_SORT_OPTIONS.map((opt) => {
+                const isActive = quickSort === opt.value;
+                return (
+                  <Button
+                    key={opt.value}
+                    type="button"
+                    size="sm"
+                    variant={isActive ? "default" : "outline"}
+                    onClick={() => setQuickSort(opt.value)}
+                    className="h-7 px-2.5 text-[11px] rounded-lg"
+                  >
+                    {opt.label}
+                  </Button>
+                );
+              })}
+
+              {hasExplicitSource && (
+                <>
+                  <span className="text-border mx-1">|</span>
+                  <div className="flex items-center gap-1">
+                    <select
+                      value={filter}
+                      onChange={(e) => setFilter(e.target.value as SourceFilter)}
+                      className="h-7 px-2 text-[11px] bg-muted/50 border border-border rounded-lg text-foreground focus:outline-none focus:ring-1 focus:ring-ring appearance-none cursor-pointer pr-5 bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22currentColor%22%20stroke-width%3D%222%22%3E%3Cpath%20d%3D%22m6%209%206%206%206-6%22%2F%3E%3C%2Fsvg%3E')] bg-[position:right_4px_center] bg-no-repeat"
+                      aria-label="Filter by source"
+                    >
+                      {SOURCE_FILTERS.map((f) => (
+                        <option key={f.value} value={f.value}>{f.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
+
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={handleClearResults}
+                className="h-7 px-2 text-[11px] text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 rounded-lg"
               >
-                {SORT_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
+                <X className="h-3 w-3 mr-1" />
+                Clear
+              </Button>
             </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={handleClearResults}
-              className="h-8 px-2 text-xs text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 rounded-lg"
-            >
-              <X className="h-3.5 w-3.5 mr-1" />
-              Clear
-            </Button>
+
+            {/* Source filter pills row */}
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              {SOURCE_FILTERS.map((f) => {
+                const isActive = filter === f.value;
+                const count =
+                  f.value === "all"
+                    ? results.length
+                    : sourceCounts
+                      ? sourceCounts[f.value]
+                      : results.filter((m) => (m.source ?? "mangahere") === f.value).length;
+                if (f.value !== "all" && count === 0) return null;
+                return (
+                  <Button
+                    key={f.value}
+                    type="button"
+                    size="sm"
+                    variant={isActive ? "default" : "outline"}
+                    onClick={() => setFilter(f.value)}
+                    className={`h-7 px-2.5 text-[11px] rounded-lg ${!isActive && f.color ? `hover:${f.color} hover:border-current/30` : ""}`}
+                  >
+                    {f.label}
+                    <span
+                      className={`ml-1.5 rounded px-1 py-0.5 text-[9px] font-mono ${
+                        isActive
+                          ? "bg-primary-foreground/20 text-primary-foreground"
+                          : "bg-muted text-muted-foreground"
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  </Button>
+                );
+              })}
+              <div className="flex items-center gap-1">
+                <ArrowUpDown className="h-3 w-3 text-muted-foreground/60" />
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as SortOption)}
+                  className="h-7 px-2 text-[11px] bg-muted/50 border border-border rounded-lg text-foreground focus:outline-none focus:ring-1 focus:ring-ring appearance-none cursor-pointer pr-5 bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22currentColor%22%20stroke-width%3D%222%22%3E%3Cpath%20d%3D%22m6%209%206%206%206-6%22%2F%3E%3C%2Fsvg%3E')] bg-[position:right_4px_center] bg-no-repeat"
+                  aria-label="Sort results"
+                >
+                  {SORT_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
         )}
 
         {/* Result count summary */}
         {hasSearched && !loading && results.length > 0 && (
           <p className="text-center text-xs text-muted-foreground animate-fade-in-up">
-            Found{" "}
+            Showing{" "}
             <span className="text-foreground font-semibold">{visibleResults.length}</span>{" "}
-            result{visibleResults.length !== 1 ? "s" : ""} from{" "}
-            <span className="text-foreground font-semibold">{activeSourceCount}</span>{" "}
-            source{activeSourceCount !== 1 ? "s" : ""}
+            of{" "}
+            <span className="text-foreground font-semibold">{results.length}</span>{" "}
+            results
+            {visibleResults.length !== results.length && (
+              <span className="text-muted-foreground/60"> (filtered)</span>
+            )}
+            {activeSourceCount > 0 && (
+              <> from{" "}
+                <span className="text-foreground font-semibold">{activeSourceCount}</span>{" "}
+                source{activeSourceCount !== 1 ? "s" : ""}
+              </>
+            )}
             {searchDuration !== null && (
               <> in{" "}
                 <span className="text-foreground font-semibold">{searchDuration}s</span>
@@ -659,12 +789,16 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
               <p className="text-sm font-medium text-muted-foreground">
                 {results.length === 0
                   ? "No results found"
-                  : `No results from ${SOURCE_FILTERS.find((f) => f.value === filter)?.label}`}
+                  : statusFilter !== "all"
+                    ? `No ${statusFilter} results`
+                    : `No results from ${SOURCE_FILTERS.find((f) => f.value === filter)?.label}`}
               </p>
               <p className="text-xs text-muted-foreground/60">
                 {results.length === 0
                   ? "Try a different title, spelling, or browse trending picks above."
-                  : "Try selecting a different source filter."}
+                  : statusFilter !== "all"
+                    ? "Try selecting a different status filter."
+                    : "Try selecting a different source filter."}
               </p>
             </div>
           </div>
@@ -681,7 +815,6 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
               const bookmarked = isBookmarked?.(m.id) ?? false;
               const isPopped = poppedBookmark === m.id;
 
-              // Pick first 2 genre tags
               const genreTags = (m.tags ?? []).slice(0, 2);
 
               return (
@@ -721,13 +854,11 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
                         <span className="text-xs">No cover</span>
                       </div>
                     )}
-                    {/* Source badge */}
                     <span
                       className={`absolute top-1.5 left-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-md border backdrop-blur-sm ${SOURCE_BADGE_CLASSES[source]}`}
                     >
                       {isResolving ? "…" : SOURCE_LABEL[source]}
                     </span>
-                    {/* Content rating dot */}
                     <span
                       className={`absolute top-1.5 right-1.5 h-2 w-2 rounded-full ${CONTENT_RATING_CLASSES[contentRating] ?? "bg-emerald-500"}`}
                       title={CONTENT_RATING_LABEL[contentRating] ?? contentRating}
@@ -742,7 +873,6 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
                         Ch.{m.lastChapter}
                       </span>
                     )}
-                    {/* Bookmark button */}
                     <button
                       type="button"
                       onClick={(e) => handleBookmark(e, m)}
@@ -751,7 +881,6 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
                     >
                       {bookmarked ? <BookmarkCheck className="h-3.5 w-3.5" /> : <Bookmark className="h-3.5 w-3.5" />}
                     </button>
-                    {/* External link hint */}
                     {isExternal && m.externalUrl && (
                       <a
                         href={m.externalUrl}
@@ -764,7 +893,6 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
                         <ExternalLink className="h-3 w-3" />
                       </a>
                     )}
-                    {/* Hover overlay */}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-300 flex flex-col items-end justify-between p-2">
                       <div className="flex flex-wrap gap-1 justify-end">
                         {genreTags.map((tag) => (

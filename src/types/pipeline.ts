@@ -49,6 +49,10 @@ export interface MangadexManga {
   source?: MangaSource;
   /** Link to the original source page (MAL/AniList URL) for non-MangaDex results. */
   externalUrl?: string | null;
+  /** Number of followers (from MangaDex or MAL). Optional — used for sorting. */
+  followedCount?: number | null;
+  /** ISO timestamp of last content update. Optional — used for sorting. */
+  updatedAt?: string | null;
 }
 
 export interface MangaSearchResult {

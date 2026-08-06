@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Terminal, Pause, ArrowDown, Circle } from "lucide-react";
+import { Terminal, ArrowDown, Circle } from "lucide-react";
 import type { JobLogEntry } from "@/types/pipeline";
 import { cn } from "@/lib/utils";
 
@@ -63,9 +63,8 @@ export function LogStream({ logs }: LogStreamProps) {
   };
 
   return (
-    <div className="rounded-lg border border-border bg-zinc-950/60 overflow-hidden relative">
-      {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/30">
+    <div className="overflow-hidden relative">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border/50 bg-muted/20">
         <div className="flex items-center gap-2">
           <Terminal className="h-4 w-4 text-muted-foreground" />
           <span className="text-xs font-medium text-muted-foreground">Live log</span>
@@ -81,7 +80,6 @@ export function LogStream({ logs }: LogStreamProps) {
         </div>
       </div>
 
-      {/* Log entries */}
       <div
         ref={containerRef}
         onScroll={handleScroll}
@@ -98,19 +96,15 @@ export function LogStream({ logs }: LogStreamProps) {
             const stg = log.stage ? (stageConfig[log.stage] ?? null) : null;
             return (
               <div key={log.id} className="flex gap-2 leading-relaxed group hover:bg-muted/20 rounded px-1 -mx-1 transition-colors">
-                {/* Timestamp */}
                 <span className="text-muted-foreground/40 flex-shrink-0 tabular-nums">
                   {new Date(log.createdAt).toLocaleTimeString("en-US", { hour12: false })}
                 </span>
-                {/* Level dot */}
                 <span className={cn("flex-shrink-0 mt-1.5 h-1.5 w-1.5 rounded-full", lvl.dot)} />
-                {/* Stage badge */}
                 {stg && (
                   <span className={cn("flex-shrink-0 px-1 rounded text-[9px] font-bold tracking-wide", stg.bg, stg.color)}>
                     {stg.label}
                   </span>
                 )}
-                {/* Message */}
                 <span className={cn("flex-1 break-words", lvl.color)}>
                   {log.message}
                 </span>
@@ -120,7 +114,6 @@ export function LogStream({ logs }: LogStreamProps) {
         )}
       </div>
 
-      {/* Jump to bottom button */}
       {showJumpDown && (
         <button
           onClick={jumpToBottom}

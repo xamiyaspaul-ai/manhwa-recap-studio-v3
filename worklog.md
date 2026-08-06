@@ -416,3 +416,119 @@
 5. **[MEDIUM] Search result filtering/sorting** — Filter by source, status, year
 6. **[LOW] Video player component** — Embed video player for completed outputs
 7. **[LOW] Batch operations on jobs** — Select multiple jobs for bulk delete/retry
+
+---
+## Round 11 — Cron Cycle (2026-08-07)
+
+### Current Project Status Assessment
+- **Cycle**: Round 11 (Cron-triggered review & development cycle)
+- **Dev Server**: Next.js 16.1.3 (Turbopack) — port 3000, compiles successfully, GET / 200
+- **Lint**: 0 errors, 0 warnings
+- **Database**: SQLite (Prisma ORM) — unchanged
+- **Pipeline Service**: Still NOT running (ML deps not available in sandbox)
+- **Component Count**: 27 pipeline components, 7 hooks, 1 new API route
+- **Caddy Proxy Fix**: Changed `localhost:3000` → `127.0.0.1:3000` in Caddyfile to resolve IPv6/IPv4 mismatch (Caddy was resolving localhost to ::1 while Next.js only listens on 127.0.0.1). Port 81 now returns 200 when dev server is running.
+
+### Completed Modifications (Round 11)
+
+#### Bug Fix: Caddy Proxy 502 ✅
+- **Root cause**: Caddy resolves `localhost` to `::1` (IPv6), but Next.js dev server only binds to `127.0.0.1` (IPv4)
+- **Fix**: Changed `reverse_proxy localhost:3000` → `reverse_proxy 127.0.0.1:3000` in Caddyfile
+- **Result**: Port 81 now proxies correctly to port 3000 (when dev server is alive)
+- **Note**: agent-browser QA still shows sandbox shell page (not the app) — this is a sandbox rendering limitation, not a proxy issue
+
+#### [Mandatory] Styling Improvements (Task 11-a) ✅
+1. **globals.css** — 6 new CSS utilities/animations:
+   - `.noise-overlay` — SVG feTurbulence noise texture at 3% opacity via ::after pseudo-element
+   - `@keyframes gradient-text-shift` + `.animate-gradient-text` — Slowly shifting gradient text (6s cycle) for hero headings
+   - `.card-spotlight` — Radial amber glow at center on hover via ::before pseudo-element (0→0.08 opacity)
+   - `.shimmer-bg` — Faint moving shimmer background on hover (105deg linear gradient, 1.5s)
+   - `.text-outline` — Outlined text using -webkit-text-stroke with transparent fill
+   - `@keyframes wiggle` + `.animate-wiggle` — Subtle ±2deg horizontal rotation (0.4s) for interactive hints
+
+2. **how-it-works.tsx** — Enhanced:
+   - Step cards get `hover-lift`, `hover-glow-sm`, `animate-item-in` with stagger-1 through stagger-5 delays
+   - Step number badge gets `border-glow` when step is highlighted/active
+   - Icon container gets `hover:shadow-lg hover:shadow-primary/20` transition
+   - Mobile vertical timeline gradient strengthened (0.4→0.08 opacity, 3s animation)
+
+3. **bookmarks-section.tsx** — Enhanced:
+   - New empty state: morph-animated container (`animate-morph`) with faded bookmark icon + descriptive text
+   - Bookmark cards get `hover-lift` and `glass-card-hover` classes
+   - Gradient line at section top (primary/30 → transparent)
+   - Section heading icon gets `text-glow` class
+
+4. **job-progress.tsx** — Enhanced:
+   - Progress bar shimmer overlay when job is actively processing (status running, not pending)
+   - Status badge gets `pulse-glow` and `border-primary/40` when job is active
+   - Stage indicators get `hover-glow-sm`
+   - Log stream wrapped in `glass-card rounded-lg overflow-hidden` container
+
+5. **log-stream.tsx** — Adjusted for glass-card parent:
+   - Removed own border, bg-zinc-950/60, rounded-lg (now provided by parent glass-card)
+   - Header uses `bg-muted/20` and `border-border/50` for subtler look inside glass card
+
+6. **recently-viewed.tsx** — Enhanced:
+   - Gradient line at section top
+   - Cards get `hover:scale-105` transition
+   - Empty state shows `animate-breathe` container with faded text
+   - Scroll container gets `hover-glow-sm rounded-xl`
+   - Title hover shows `group-hover:text-primary` and `group-hover:border-primary/30`
+
+#### [Mandatory] New Features (Task 11-b) ✅
+
+1. **Real-time Stats Polling** — Enhanced `pipeline-stats.tsx`:
+   - Polls `/api/jobs` every 15 seconds via `setInterval`
+   - Shows green animated "Live" indicator (ping dot + "Live" text) in section header when polling is active
+   - First fetch sets `polling=true` and `loading=false`; interval continues after
+   - Proper cleanup: `clearInterval` on unmount + `cancelled` flag to prevent state updates after unmount
+   - Uses `isFirstFetchDone` ref to track first successful fetch
+
+2. **Export Job Config as JSON** — Enhanced `job-detail-modal.tsx` + new API route:
+   - "Export Config" button with Download icon in modal header (sticky bar)
+   - Extracts config fields: mangaTitle, mangaId, language, sourceLang, voice, chapterLimit, translate, useBgm, bgmPath, totalChapters
+   - Sanitizes filename (non-alphanumeric → `_`), downloads as `{mangaTitle}-config.json`
+   - Uses Blob + URL.createObjectURL + programmatic click + revokeObjectURL
+   - Toast notification on successful export
+   - New API route `POST /api/jobs/import` — accepts JSON config, validates mangaId/mangaTitle, returns config with defaults
+
+3. **Search Result Filtering & Sorting** — Enhanced `search-section.tsx` + `types/pipeline.ts`:
+   - **Status filter pills**: All, Ongoing, Completed, Hiatus — with result count badges per status
+   - **Quick sort pills**: Relevance (default), Recently Updated, Most Followed, Title A-Z
+   - **Source filter**: Conditional dropdown shown only when results have explicit `source` field
+   - Filter/sort controls appear between search input and results grid (only when results exist)
+   - Shows "Showing X of Y results (filtered)" when filters are active
+   - Types updated: `followedCount?: number | null` and `updatedAt?: string | null` added to `MangadexManga`
+   - All new state properly reset in `handleClearResults` and `useImperativeHandle.clearResults`
+
+### Verification Results
+- ✅ `bun run lint` — 0 errors, 0 warnings
+- ✅ Dev server compiles page successfully — GET / 200 in 3.5s
+- ✅ New API route `POST /api/jobs/import` works (returns 405 for GET, validates required fields for POST)
+- ✅ All new features use existing theme system (oklch amber, shadcn/ui)
+- ✅ React 19 strict-mode compliance verified
+
+### Updated Component Count
+- **27 pipeline components** (unchanged from Round 10)
+- **7 hooks** (unchanged)
+- **1 new API route**: `POST /api/jobs/import`
+
+---
+## Unresolved Issues & Next-Phase Recommendations
+
+### Known Issues
+1. **Dev Server Stability**: Intermittent process death in sandbox (not OOM — no dmesg evidence). Mitigated with keep-alive.sh script.
+2. **Caddy Proxy**: Fixed IPv6/IPv4 mismatch in Caddyfile. Port 81 works when dev server is alive. agent-browser shows sandbox shell page (not the actual app) — sandbox rendering limitation.
+3. **Pipeline Service Not Running**: Python service on port 3001 requires ML deps not in sandbox.
+4. **React 19 Lint Strictness**: render-time patterns required; refs only in effects/callbacks.
+5. **Turbopack JSX Comment Quirk**: No JSX comments in map callbacks.
+6. **JSX Fragment Rule**: Multiple siblings in ternary branches must be wrapped in Fragment.
+
+### Recommended Next-Phase Priorities
+1. **[HIGH] Video player component** — Embed video player for completed job outputs in job-detail-modal
+2. **[HIGH] Batch operations on jobs** — Select multiple jobs for bulk delete/retry in job-history
+3. **[MEDIUM] PWA support** — Service worker + manifest for installable app
+4. **[MEDIUM] Accessibility audit** — Full keyboard nav, ARIA labels, screen reader testing
+5. **[MEDIUM] Chapter page preview thumbnails** — Show thumbnail previews in manga-config before starting pipeline
+6. **[LOW] Drag-and-drop job reordering** — Reorder jobs in history via drag-and-drop
+7. **[LOW] Share recap video links** — Generate shareable links for completed recap videos

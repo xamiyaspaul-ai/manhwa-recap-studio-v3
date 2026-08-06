@@ -31,21 +31,41 @@ export function RecentlyViewed({
   onRemoveItem,
   onClearAll,
 }: RecentlyViewedProps) {
-  if (items.length === 0) return null;
+  if (items.length === 0) {
+    return (
+      <section className="animate-fade-in-up">
+        <div className="max-w-6xl mx-auto">
+          <div className="relative">
+            <div className="absolute inset-x-0 top-0 h-[2px] rounded-full bg-gradient-to-r from-primary/20 via-primary/5 to-transparent" />
+            <div className="flex items-center gap-2 mb-3 pt-1">
+              <Clock className="h-4 w-4 text-muted-foreground/40" />
+              <h2 className="text-sm font-semibold text-muted-foreground/40">Recently Viewed</h2>
+            </div>
+            <div className="flex items-center justify-center py-6 animate-breathe">
+              <p className="text-xs text-muted-foreground/30">Viewed manga will appear here</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="animate-fade-in-up">
       <div className="max-w-6xl mx-auto">
-        <div className="flex items-center gap-2 mb-3">
-          <Clock className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold text-muted-foreground">Recently Viewed</h2>
+        <div className="relative">
+          <div className="absolute inset-x-0 top-0 h-[2px] rounded-full bg-gradient-to-r from-primary/30 via-primary/10 to-transparent" />
+          <div className="flex items-center gap-2 mb-3 pt-1">
+            <Clock className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold text-muted-foreground">Recently Viewed</h2>
+          </div>
         </div>
 
-        <div className="flex items-center gap-3 overflow-x-auto snap-x snap-mandatory scrollbar-thin pb-2">
+        <div className="flex items-center gap-3 overflow-x-auto snap-x snap-mandatory scrollbar-thin pb-2 hover-glow-sm rounded-xl">
           {items.map((item) => (
             <div
               key={item.id}
-              className="group relative flex flex-col items-center gap-1.5 snap-start shrink-0 cursor-pointer"
+              className="group relative flex flex-col items-center gap-1.5 snap-start shrink-0 cursor-pointer transition-transform duration-200 hover:scale-105"
               onClick={() => {
                 onSelectManga({
                   id: item.id,
@@ -73,7 +93,7 @@ export function RecentlyViewed({
                 <X className="h-2.5 w-2.5" />
               </button>
 
-              <div className="w-12 h-[68px] rounded-lg overflow-hidden bg-muted border border-border">
+              <div className="w-12 h-[68px] rounded-lg overflow-hidden bg-muted border border-border group-hover:border-primary/30 transition-colors">
                 {item.coverUrl ? (
                   <img
                     src={item.coverUrl}
@@ -87,7 +107,7 @@ export function RecentlyViewed({
                 )}
               </div>
 
-              <p className="text-[10px] text-muted-foreground w-[72px] text-center leading-tight line-clamp-2">
+              <p className="text-[10px] text-muted-foreground w-[72px] text-center leading-tight line-clamp-2 group-hover:text-primary transition-colors">
                 {item.title}
               </p>
 

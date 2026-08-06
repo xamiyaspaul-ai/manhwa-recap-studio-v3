@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
-import { AlertCircle, Cloud } from "lucide-react";
+import { useMemo, useCallback } from "react";
+import { AlertCircle, Cloud, Download } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import type { JobSummary, JobStatus, ChapterInfo } from "@/types/pipeline";
 
@@ -96,11 +98,50 @@ function chapterProgress(ch: ChapterInfo): number {
   return 0;
 }
 
+function sanitizeFilename(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_\- ]/g, "_").replace(/_+/g, "_").trim();
+}
+
 export function JobDetailModal({ job, open, onClose }: JobDetailModalProps) {
+  const { toast } = useToast();
+
   const duration = useMemo(
     () => (job ? calcDuration(job.createdAt, job.updatedAt) : ""),
     [job],
   );
+
+  const handleExportConfig = useCallback(() => {
+    if (!job) return;
+    const config = {
+      mangaTitle: job.mangaTitle,
+      mangaId: job.mangaId,
+      language: job.language,
+      sourceLang: job.sourceLang,
+      voice: job.voice,
+      chapterLimit: job.chapterLimit,
+      translate: job.translate,
+      useBgm: job.useBgm,
+      bgmPath: job.bgmPath,
+      totalChapters: job.totalChapters,
+    };
+
+    const sanitizedTitle = sanitizeFilename(job.mangaTitle);
+    const json = JSON.stringify(config, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${sanitizedTitle}-config.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+
+    toast({
+      title: "Config exported",
+      description: `${sanitizedTitle}-config.json downloaded`,
+    });
+  }, [job, toast]);
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -113,16 +154,28 @@ export function JobDetailModal({ job, open, onClose }: JobDetailModalProps) {
               </DialogTitle>
             </div>
             {job && (
-              <Badge
-                variant="outline"
-                className={cn(
-                  "shrink-0 gap-1.5 text-[11px] font-medium border",
-                  statusConfig[job.status].color,
-                )}
-              >
-                <span className={cn("h-1.5 w-1.5 rounded-full", statusConfig[job.status].dotColor)} />
-                {statusConfig[job.status].label}
-              </Badge>
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2.5 text-xs gap-1.5 rounded-lg border-border hover:border-primary/30 hover:bg-primary/5 transition-colors"
+                  onClick={handleExportConfig}
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Export Config</span>
+                </Button>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "shrink-0 gap-1.5 text-[11px] font-medium border",
+                    statusConfig[job.status].color,
+                  )}
+                >
+                  <span className={cn("h-1.5 w-1.5 rounded-full", statusConfig[job.status].dotColor)} />
+                  {statusConfig[job.status].label}
+                </Badge>
+              </>
             )}
           </DialogHeader>
         </div>

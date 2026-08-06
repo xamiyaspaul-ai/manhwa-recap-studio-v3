@@ -57,8 +57,6 @@ function getActiveStageIndex(job: JobSummary | null): number {
     summarizing: 2,
     rendering: 4,
   };
-  // All Python sub-stages (slice, narrate, tts, captions, merge, bgm)
-  // map to the Render stage in the UI.
   const stageMap: Record<string, number> = {
     search: 0,
     scrape: 1,
@@ -90,7 +88,6 @@ export function JobProgress({ job, logs, connected, onCancel, onNewJob }: JobPro
     if (!job) return;
     fetch(`/api/jobs/${job.id}`, { method: "POST" }).then((r) => {
       if (r.ok) {
-        // The socket.io subscription will pick up the new status automatically.
       }
     });
   }, [job]);
@@ -109,10 +106,10 @@ export function JobProgress({ job, logs, connected, onCancel, onNewJob }: JobPro
   const isCancelled = job.status === "cancelled";
   const isPending = job.status === "pending";
   const isRunning = !isDone && !isError && !isCancelled;
+  const isProcessing = isRunning && !isPending;
 
   return (
     <section className="max-w-5xl mx-auto space-y-6">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-4 p-6 rounded-xl border border-border bg-card">
         <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden bg-muted flex-shrink-0 border border-border">
           {job.coverUrl ? (
@@ -122,7 +119,15 @@ export function JobProgress({ job, logs, connected, onCancel, onNewJob }: JobPro
         <div className="flex-1 min-w-0 space-y-1">
           <h2 className="text-xl font-bold truncate">{job.mangaTitle}</h2>
           <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-            <Badge variant="outline" className="capitalize">{job.status}</Badge>
+            <Badge
+              variant="outline"
+              className={cn(
+                "capitalize",
+                isProcessing && "pulse-glow border-primary/40"
+              )}
+            >
+              {job.status}
+            </Badge>
             <span>·</span>
             <span>{job.totalChapters} chapters</span>
             <span>·</span>
@@ -174,7 +179,6 @@ export function JobProgress({ job, logs, connected, onCancel, onNewJob }: JobPro
         </div>
       </div>
 
-      {/* Progress bar */}
       <div className="p-6 rounded-xl border border-border bg-card space-y-4">
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium">
@@ -182,17 +186,28 @@ export function JobProgress({ job, logs, connected, onCancel, onNewJob }: JobPro
           </span>
           <span className="text-2xl font-bold tabular-nums text-primary">{job.progress}%</span>
         </div>
-        <Progress
-          value={job.progress}
-          className={`h-2.5 transition-all ${
-            isError ? "[&>div]:bg-rose-500" :
-            isDone ? "[&>div]:bg-emerald-500" :
-            isPending ? "[&>div]:bg-amber-500" :
-            "[&>div]:bg-primary"
-          }`}
-        />
-        
-        {/* Stage pipeline */}
+        <div className="relative">
+          <Progress
+            value={job.progress}
+            className={`h-2.5 transition-all ${
+              isError ? "[&>div]:bg-rose-500" :
+              isDone ? "[&>div]:bg-emerald-500" :
+              isPending ? "[&>div]:bg-amber-500" :
+              "[&>div]:bg-primary"
+            }`}
+          />
+          {isProcessing && (
+            <div
+              className="absolute inset-0 rounded-full pointer-events-none"
+              style={{
+                background: "linear-gradient(90deg, transparent 0%, oklch(0.78 0.17 65 / 0.15) 50%, transparent 100%)",
+                backgroundSize: "200% 100%",
+                animation: "shimmer 1.5s ease-in-out infinite",
+              }}
+            />
+          )}
+        </div>
+
         <div className="flex flex-wrap items-center gap-1.5 pt-2">
           {PIPELINE_STAGES.map((stage, idx) => {
             const isDone_ = idx < activeStageIdx;
@@ -203,7 +218,7 @@ export function JobProgress({ job, logs, connected, onCancel, onNewJob }: JobPro
               <div
                 key={stage.key}
                 className={cn(
-                  "flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-all",
+                  "flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-all hover-glow-sm",
                   isDone_ && "text-emerald-400",
                   isActive && "text-primary bg-primary/10 ring-1 ring-primary/30",
                   isFuture && "text-muted-foreground/50"
@@ -223,7 +238,6 @@ export function JobProgress({ job, logs, connected, onCancel, onNewJob }: JobPro
         </div>
       </div>
 
-      {/* Error banner */}
       {isError && job.error && (
         <div className="p-4 rounded-xl border border-rose-500/30 bg-rose-500/10 flex items-start gap-3">
           <AlertCircle className="h-5 w-5 text-rose-400 flex-shrink-0 mt-0.5" />
@@ -237,7 +251,6 @@ export function JobProgress({ job, logs, connected, onCancel, onNewJob }: JobPro
         </div>
       )}
 
-      {/* Pending banner — job is waiting for the pipeline-service to pick it up */}
       {isPending && (
         <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 flex items-start gap-3">
           <Loader2 className="h-5 w-5 text-amber-400 flex-shrink-0 mt-0.5 animate-spin" />
@@ -250,10 +263,8 @@ export function JobProgress({ job, logs, connected, onCancel, onNewJob }: JobPro
         </div>
       )}
 
-      {/* Video result */}
       {isDone && <VideoResult job={job} />}
 
-      {/* Chapters + logs */}
       <div className="grid lg:grid-cols-2 gap-6">
         <div className="p-5 rounded-xl border border-border bg-card space-y-3">
           <div className="flex items-center justify-between">
@@ -265,7 +276,9 @@ export function JobProgress({ job, logs, connected, onCancel, onNewJob }: JobPro
           <ChapterGrid chapters={job.chapters} jobId={job.id} />
         </div>
 
-        <LogStream logs={logs} />
+        <div className="glass-card rounded-lg overflow-hidden">
+          <LogStream logs={logs} />
+        </div>
       </div>
     </section>
   );

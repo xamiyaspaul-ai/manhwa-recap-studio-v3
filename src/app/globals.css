@@ -630,6 +630,102 @@
   animation: fade-in-scale 0.4s ease-out;
 }
 
+/* === ROUND 11: 6 NEW CSS UTILITIES === */
+
+/* Noise texture overlay — very subtle grain using SVG data URI */
+.noise-overlay {
+  position: relative;
+}
+.noise-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.03;
+  pointer-events: none;
+ background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
+  z-index: 1;
+}
+
+/* Gradient text shift animation for hero headings */
+@keyframes gradient-text-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.animate-gradient-text {
+ background-size: 200% 200%;
+  animation: gradient-text-shift 6s ease infinite;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Card spotlight — radial gradient glow at center on hover */
+.card-spotlight {
+  position: relative;
+}
+.card-spotlight::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 200px;
+  height: 200px;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, oklch(0.78 0.17 65 / 0.15) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  pointer-events: none;
+  z-index: 0;
+}
+.card-spotlight:hover::before {
+  opacity: 0.08;
+}
+
+/* Shimmer background — subtle moving shimmer for card backgrounds on hover */
+.shimmer-bg {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 40%,
+    oklch(0.78 0.17 65 / 0.04) 45%,
+    oklch(0.78 0.17 65 / 0.06) 50%,
+    oklch(0.78 0.17 65 / 0.04) 55%,
+    transparent 60%
+  );
+  background-size: 200% 100%;
+  transform: translateX(-100%);
+  pointer-events: none;
+  z-index: 0;
+}
+.shimmer-bg:hover::before {
+  animation: shimmer 1.5s ease-in-out;
+}
+
+/* Text outline — stroke effect with transparent fill */
+.text-outline {
+  -webkit-text-stroke: 1px currentColor;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Wiggle animation — subtle horizontal rotation for interactive hints */
+@keyframes wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(2deg); }
+  75% { transform: rotate(-2deg); }
+}
+.animate-wiggle {
+  animation: wiggle 0.4s ease-in-out;
+}
+
 /* Respect prefers-reduced-motion */
 @media (prefers-reduced-motion: reduce) {
   *,

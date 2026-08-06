@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   BarChart3,
   ImageIcon,
@@ -56,21 +56,39 @@ const STATUS_ICON_MAP: Record<JobStatus, { color: string; bg: string }> = {
 export function PipelineStats() {
   const [jobs, setJobs] = useState<JobSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [polling, setPolling] = useState(false);
   const { ref, isVisible } = useSectionObserver(0.05);
+  const isFirstFetchDone = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/jobs")
-      .then((r) => r.json())
-      .then((data) => {
-        if (!cancelled) setJobs(data.jobs ?? []);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+
+    const fetchJobs = async () => {
+      try {
+        const res = await fetch("/api/jobs");
+        const data = await res.json();
+        if (!cancelled) {
+          setJobs(data.jobs ?? []);
+          if (!isFirstFetchDone.current) {
+            isFirstFetchDone.current = true;
+            setLoading(false);
+            setPolling(true);
+          }
+        }
+      } catch {
+        if (!isFirstFetchDone.current && !cancelled) {
+          isFirstFetchDone.current = true;
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchJobs();
+    const interval = setInterval(fetchJobs, 15000);
+
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, []);
 
@@ -133,6 +151,17 @@ export function PipelineStats() {
     { key: "active", count: activeCount, color: "bg-amber-500" },
   ];
 
+  // Live indicator element
+  const liveIndicator = polling && !loading ? (
+    <span className="inline-flex items-center gap-1.5 ml-2">
+      <span className="relative flex h-2 w-2">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+      </span>
+      <span className="text-[10px] font-medium text-emerald-400">Live</span>
+    </span>
+  ) : null;
+
   // Empty state
   if (!loading && total === 0) {
     return (
@@ -184,6 +213,7 @@ export function PipelineStats() {
             <span className="text-[11px] font-semibold uppercase tracking-widest text-primary">
               Pipeline Stats
             </span>
+            {liveIndicator}
           </div>
           <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">
             Your Studio Analytics
