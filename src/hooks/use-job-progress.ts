@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { getSocket } from "@/lib/socket";
+import { toast } from "@/hooks/use-toast";
 import type { JobSummary, JobLogEntry, ChapterInfo, ServerEvent } from "@/types/pipeline";
 
 interface UseJobProgressResult {
@@ -20,6 +21,11 @@ export function useJobProgress(jobId: string | null): UseJobProgressResult {
   const [logs, setLogs] = useState<JobLogEntry[]>([]);
   const [connected, setConnected] = useState(false);
 
+  // Track previously notified status to avoid duplicate toasts
+  const notifiedStatusRef = useRef<string | null>(null);
+  const stuckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSinceRef = useRef<number | null>(null);
+
   const mergeChapter = useCallback((chapter: ChapterInfo) => {
     setJob((prev) =>
       prev
@@ -33,7 +39,7 @@ export function useJobProgress(jobId: string | null): UseJobProgressResult {
     );
   }, []);
 
-  // Reset state when jobId changes (React-recommended "adjust state during render" pattern).
+  // Reset state when jobId changes (React-recommended render-time pattern).
   const [prevJobId, setPrevJobId] = useState<string | null>(jobId);
   if (jobId !== prevJobId) {
     setPrevJobId(jobId);
@@ -41,6 +47,94 @@ export function useJobProgress(jobId: string | null): UseJobProgressResult {
     setLogs([]);
     setConnected(false);
   }
+
+  // Reset refs when jobId changes (separate effect to satisfy react-hooks/refs rule).
+  const prevJobIdRef = useRef<string | null>(jobId);
+  useEffect(() => {
+    if (jobId !== prevJobIdRef.current) {
+      prevJobIdRef.current = jobId;
+      notifiedStatusRef.current = null;
+      pendingSinceRef.current = null;
+      if (stuckTimerRef.current) {
+        clearTimeout(stuckTimerRef.current);
+        stuckTimerRef.current = null;
+      }
+    }
+  }, [jobId]);
+
+  // Toast notification on status transitions
+  useEffect(() => {
+    if (!job) return;
+    const status = job.status;
+    if (notifiedStatusRef.current === status) return;
+    const prev = notifiedStatusRef.current;
+    notifiedStatusRef.current = status;
+
+    // Only show toasts on transitions, not on initial load.
+    if (prev === null && status === "pending") return;
+
+    if (status === "done") {
+      toast({
+        title: "✅ Recap complete!",
+        description: `"${job.mangaTitle}" finished processing — ${job.totalChapters} chapters, ${job.totalImages} images.`,
+      });
+    } else if (status === "error") {
+      toast({
+        title: "Pipeline failed",
+        description: `"${job.mangaTitle}" encountered an error: ${job.error || "Unknown error"}`,
+        variant: "destructive",
+      });
+    } else if (status === "cancelled") {
+      toast({
+        title: "Job cancelled",
+        description: `"${job.mangaTitle}" was cancelled.`,
+      });
+    }
+  }, [job]);
+
+  // Stuck detection: if job stays in "pending" for > 30s, notify user
+  useEffect(() => {
+    if (stuckTimerRef.current) {
+      clearTimeout(stuckTimerRef.current);
+      stuckTimerRef.current = null;
+    }
+
+    if (!job || job.status !== "pending") {
+      pendingSinceRef.current = null;
+      return;
+    }
+
+    if (!pendingSinceRef.current) {
+      pendingSinceRef.current = Date.now();
+    }
+
+    const elapsed = Date.now() - pendingSinceRef.current;
+    const remaining = Math.max(0, 30_000 - elapsed);
+
+    if (remaining === 0) {
+      toast({
+        title: "⏳ Pipeline seems stuck",
+        description: `"${job.mangaTitle}" is still waiting to start. The pipeline service may be offline — try clicking Retry.`,
+      });
+      // Don't re-notify — set a flag via extending the pendingSince to avoid repeat
+      pendingSinceRef.current = Date.now() + 60_000; // Push ahead so the 30s check won't re-trigger
+    } else {
+      stuckTimerRef.current = setTimeout(() => {
+        toast({
+          title: "⏳ Pipeline seems stuck",
+          description: `"${job.mangaTitle}" is still waiting to start. The pipeline service may be offline — try clicking Retry.`,
+        });
+        pendingSinceRef.current = Date.now() + 60_000;
+      }, remaining);
+    }
+
+    return () => {
+      if (stuckTimerRef.current) {
+        clearTimeout(stuckTimerRef.current);
+        stuckTimerRef.current = null;
+      }
+    };
+  }, [job?.status, job?.mangaTitle]);
 
   useEffect(() => {
     if (!jobId) {

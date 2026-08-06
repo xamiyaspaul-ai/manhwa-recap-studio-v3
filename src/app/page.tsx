@@ -334,30 +334,58 @@ export default function Home() {
 
       {/* CTA Section */}
       {view === "search" && (
-        <div className="border-t border-border">
-          <div className="max-w-6xl mx-auto px-4 py-12 sm:py-16">
-            <div className="flex flex-col lg:flex-row items-center justify-between gap-8">
-              <div className="space-y-3">
-                <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">Ready to create your<br /><span className="text-gradient">first recap video?</span></h2>
-                <p className="text-sm text-muted-foreground max-w-md leading-relaxed">
+        <div className="relative border-t border-border overflow-hidden">
+          {/* Animated gradient mesh background */}
+          <div
+            className="absolute inset-0 opacity-[0.07]"
+            style={{
+              background: "radial-gradient(ellipse 600px 400px at 20% 50%, oklch(0.78 0.17 65 / 0.6), transparent), radial-gradient(ellipse 500px 350px at 80% 40%, oklch(0.72 0.18 45 / 0.5), transparent), radial-gradient(ellipse 400px 300px at 50% 80%, oklch(0.85 0.15 75 / 0.4), transparent)",
+              backgroundSize: "200% 200%",
+              animation: "gradient-mesh 12s ease-in-out infinite",
+            }}
+          />
+
+          {/* Floating decorative shapes */}
+          <div className="absolute top-8 left-[10%] w-3 h-3 rounded-full bg-primary/20 animate-float" style={{ animationDelay: "0s" }} />
+          <div className="absolute top-12 right-[15%] w-2 h-2 rotate-45 bg-primary/15 animate-float" style={{ animationDelay: "0.8s" }} />
+          <div className="absolute bottom-10 left-[25%] w-2.5 h-2.5 rounded-full bg-primary/10 animate-float" style={{ animationDelay: "1.5s" }} />
+          <div className="absolute top-1/2 right-[8%] w-2 h-2 rotate-45 bg-primary/12 animate-float" style={{ animationDelay: "2.2s" }} />
+          <div className="absolute bottom-8 right-[30%] w-1.5 h-1.5 rounded-full bg-primary/18 animate-float" style={{ animationDelay: "0.5s" }} />
+
+          <div className="relative max-w-6xl mx-auto px-4 py-16 sm:py-20">
+            <div className="flex flex-col lg:flex-row items-center justify-between gap-10">
+              <div className="space-y-4 text-center lg:text-left">
+                <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight leading-tight">
+                  Ready to create your{" "}
+                  <br className="hidden sm:block" />
+                  <span className="text-gradient">first recap video?</span>
+                </h2>
+                <p className="text-sm text-muted-foreground max-w-md leading-relaxed mx-auto lg:mx-0">
                   Search for any manhwa, configure your preferences, and let the AI pipeline handle the rest. It takes about 6 minutes per chapter.
                 </p>
               </div>
               <div className="flex flex-col sm:flex-row items-center gap-3">
-                <button
-                  onClick={() => {
-                    const input = document.getElementById("search-input") as HTMLInputElement | null;
-                    if (input) {
-                    input.focus();
-                    input.scrollIntoView({ behavior: "smooth", block: "center" });
-                    }
-                  }}
-                  className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-primary text-primary-foreground font-semibold hover:bg-primary/90 shadow-lg hover:shadow-xl hover:shadow-primary/20 transition-all active:scale-95"
-                >
-                  <Sparkles className="h-4 w-4" />
-                  Get Started
-                  <ArrowRight className="h-4 w-4" />
-                </button>
+                {/* Main CTA button with glow + pulsing ring */}
+                <div className="relative">
+                  {/* Pulsing ring behind button */}
+                  <div className="absolute inset-0 rounded-xl bg-primary/20 animate-pulse-ring" />
+                  {/* Subtle glow behind button */}
+                  <div className="absolute -inset-3 rounded-2xl bg-primary/10 blur-xl" />
+                  <button
+                    onClick={() => {
+                      const input = document.getElementById("search-input") as HTMLInputElement | null;
+                      if (input) {
+                        input.focus();
+                        input.scrollIntoView({ behavior: "smooth", block: "center" });
+                      }
+                    }}
+                    className="relative inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-primary text-primary-foreground font-semibold hover:bg-primary/90 shadow-lg hover:shadow-xl hover:shadow-primary/20 transition-all active:scale-95 shine-effect"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    Get Started
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
+                </div>
                 <button
                   onClick={() => {
                     const input = document.getElementById("search-input") as HTMLInputElement | null;
@@ -370,7 +398,7 @@ export default function Home() {
                       input.scrollIntoView({ behavior: "smooth", block: "center" });
                     }
                   }}
-                  className="inline-flex items-center gap-2 px-5 py-3 rounded-xl border border-primary/30 text-primary hover:bg-primary/5 transition-all"
+                  className="inline-flex items-center gap-2 px-5 py-3 rounded-xl border border-primary/30 text-primary hover:bg-primary/5 hover:border-primary/50 transition-all hover-lift"
                 >
                   Try Demo
                 </button>
@@ -381,12 +409,20 @@ export default function Home() {
       )}
 
       {/* Footer */}
-      <footer className="mt-auto border-t border-border bg-background/50">
-        <div className="max-w-6xl mx-auto px-4 py-8 space-y-5">
+      <footer className="relative mt-auto border-t border-border bg-background/50 overflow-hidden">
+        {/* Subtle top gradient glow line */}
+        <div
+          className="absolute top-0 inset-x-0 h-px"
+          style={{
+            background: "linear-gradient(90deg, transparent, oklch(0.78 0.17 65 / 0.4), oklch(0.72 0.18 45 / 0.3), transparent)",
+          }}
+        />
+
+        <div className="relative max-w-6xl mx-auto px-4 py-8 space-y-5">
           {/* Brand section */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2.5">
-              <div className="p-1.5 rounded-lg bg-primary/10">
+              <div className="p-1.5 rounded-lg bg-primary/10 border border-primary/15">
                 <Zap className="h-4 w-4 text-primary" />
               </div>
               <span className="font-bold text-sm">Manhwa Recap Studio</span>
@@ -415,16 +451,21 @@ export default function Home() {
 
           <Separator className="opacity-30" />
 
-          {/* Technology badges */}
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            {TECH_BADGES.map((badge) => (
-              <span
-                key={badge}
-                className="bg-card border border-border rounded-full px-2.5 py-0.5 text-[10px] text-muted-foreground font-medium hover:border-primary/30 hover:text-foreground transition-colors cursor-default"
-              >
-                {badge}
-              </span>
-            ))}
+          {/* Technology badges with marquee scroll */}
+          <div className="relative overflow-hidden py-1">
+            {/* Fade edges */}
+            <div className="absolute inset-y-0 left-0 w-12 bg-gradient-to-r from-background/80 to-transparent z-10 pointer-events-none" />
+            <div className="absolute inset-y-0 right-0 w-12 bg-gradient-to-l from-background/80 to-transparent z-10 pointer-events-none" />
+            <div className="flex animate-marquee w-max gap-2">
+              {[...TECH_BADGES, ...TECH_BADGES].map((badge, i) => (
+                <span
+                  key={`${badge}-${i}`}
+                  className="bg-card border border-border rounded-full px-2.5 py-0.5 text-[10px] text-muted-foreground font-medium hover:border-primary/30 hover:text-foreground transition-colors cursor-default whitespace-nowrap"
+                >
+                  {badge}
+                </span>
+              ))}
+            </div>
           </div>
 
           <Separator className="opacity-20" />

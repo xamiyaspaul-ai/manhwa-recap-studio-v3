@@ -123,3 +123,164 @@
 5. **[MEDIUM] Enhance manga-config with chapter preview** — Show thumbnail previews of chapter pages before starting the pipeline.
 6. **[LOW] Add keyboard navigation for search results** — Arrow keys to navigate search results, Enter to select.
 7. **[LOW] Add PWA support** — Service worker + manifest for offline-capable installable app.
+
+---
+### [Mandatory] Styling Improvements Round 2 (Task ID: 2-a)
+**Agent**: frontend-styling-expert
+**Status**: ✅ Complete
+
+1. **globals.css** — Added 11 new CSS utility classes & animations:
+   - `.glass-card`: Glassmorphism card with border, shadow, backdrop blur (theme-aware)
+   - `.gradient-border`: Animated rotating conic gradient border using ::before/::after pseudo-elements
+   - `@keyframes ripple` + `.animate-ripple`: Ripple effect for button clicks
+   - `@keyframes slide-up-stagger`: Staggered list entrance animation
+   - `.hover-lift`: Hover translateY(-2px) with shadow increase (theme-aware)
+   - `.shine-effect`: Moving shine/reflection sweep on hover via pseudo-element
+   - `.text-glow`: Subtle text glow using text-shadow (theme-aware)
+   - `.backdrop-blur-strong`: Stronger backdrop blur (24px, 200% saturate)
+   - `@keyframes marquee` + `.animate-marquee`: Horizontal marquee scroll for badges
+   - `.border-glow`: Animated border glow for focused/active elements
+   - `.stagger-1` through `.stagger-8`: Animation-delay utility classes (100ms–800ms)
+
+2. **page.tsx CTA Section** — Enhanced with 4 new visual layers:
+   - Animated gradient mesh background (3 radial gradients, 12s infinite loop at 7% opacity)
+   - 5 floating decorative shapes (circles + rotated squares) with staggered animate-float delays
+   - Main CTA button wrapped with: pulsing ring (animate-pulse-ring), soft glow blur layer, shine-effect sweep
+   - "Try Demo" button upgraded with hover-lift class + hover border color transition
+   - Larger padding (py-16/20), responsive text sizing (lg:text-4xl), centered layout on mobile
+
+3. **page.tsx Footer** — Enhanced with 2 new visual details:
+   - Amber gradient glow line at top border (replaces plain border-t)
+   - Tech badges now scroll horizontally via marquee animation with fade-edge overlays
+   - Footer brand icon gets a subtle border accent
+
+**No logic/functionality changes** — All modifications are purely visual/styling.
+**Color scheme preserved** — All new styles use oklch amber/orange hues matching existing theme.
+
+---
+### [Features Agent] New Features & Enhancements (Task ID: 3)
+**Agent**: features-agent
+**Status**: ✅ Complete
+
+5 new features implemented from the recommended next-phase priorities:
+
+**3a. Toast Notifications for Job Events** — ✅ Complete
+- Modified `useJobProgress` hook to fire toast notifications on job status transitions
+- Toast on job completion (✅ emoji, title + chapter/image counts)
+- Toast on job failure (destructive variant, includes error message)
+- Toast on job cancellation
+- Stuck detection: if job stays in "pending" status for >30 seconds, shows a warning toast suggesting the user retry
+- Uses existing `toast` from `@/hooks/use-toast` — no new dependencies
+- Deduplication via `notifiedStatusRef` prevents duplicate toasts
+- Properly resets on jobId change
+
+**3b. Voice Selector with Language Grouping & Search** — ✅ Complete
+- New `voice-selector.tsx` component replacing the flat 55+ item Select dropdown
+- Voices organized into 16 language groups (en-US, en-GB, en-AU, en-CA, en-IE, en-IN, en-ZA, ja-JP, ko-KR, zh-CN, es-ES, fr-FR, de-DE, pt-BR, hi-IN)
+- Search bar with clear button to filter voices by name or language code
+- Gender filter pills (All / ♂ Male / ♀ Female)
+- Language group quick-jump pills with flag emojis (scrollable)
+- Group headers with sticky positioning and voice count badges
+- Gender color coding (sky-400 for male, rose-400 for female)
+- Multilingual badge ("ML") for multilingual voices
+- Radio-style selection indicators with primary color
+- Integrated preview button (play/pause/stop) with loading state
+- Click-outside and Escape key to close dropdown
+- Exports `VOICE_FLAT` array for use in other components (e.g. settings dialog)
+- Replaces the old Select dropdown in `manga-config.tsx`; removed 64-line VOICES array
+
+**3c. Dark/Light Theme Persistence** — ✅ Complete
+- Added `storageKey="mrs-theme"` to NextThemesProvider in `providers.tsx`
+- Set `enableSystem={false}` to prevent system preference override
+- Theme now persists across page reloads via localStorage
+
+**3d. Job Comparison Dialog** — ✅ Complete
+- New `job-comparison.tsx` component integrated into `job-history.tsx`
+- "Compare" button appears in Job History header (disabled if <2 completed/failed jobs)
+- Two-step flow: selection mode → comparison mode
+- Selection mode: list of completed/failed jobs with radio-style selection (max 2)
+- Comparison mode shows 12-row side-by-side table:
+  - Status, Progress, Chapters, Images, Voice, Language, Translate, Stage, Created, Updated, Duration, Archive
+- Visual progress comparison cards with chapter and image progress bars
+- Formatted duration calculation for completed jobs
+- Short voice name extraction for compact display
+- "Select different jobs" button to go back to selection mode
+- Uses oklch theme colors throughout
+
+**3e. Keyboard Navigation for Search Results** — ✅ Complete
+- Added ArrowDown/ArrowUp navigation through search result grid cards
+- Enter to select the focused result
+- Escape to blur the search input
+- Visual highlight (ring-2 ring-primary/60 + scale transform) on focused card
+- Mouse hover also updates focused index (syncs keyboard and mouse navigation)
+- Scrolls focused card into view with smooth behavior
+- Resets focused index when results change
+- `data-result-index` attribute on each card for DOM querying
+- Imported `cn` utility for conditional class merging
+
+---
+### Updated Component Count
+- **22 pipeline components** (was 20): +voice-selector.tsx, +job-comparison.tsx
+- **6 hooks** (unchanged): use-job-progress (enhanced), use-search-history, use-bookmarks, use-toast, use-section-observer, use-mobile
+
+---
+## Round 8 — Cron Cycle (2026-08-06)
+
+### Current Project Status Assessment
+- **Cycle**: Round 8 (Cron-triggered review & development cycle)
+- **Dev Server**: Next.js 16.1.3 (Turbopack) — port 3000, compiles successfully, GET / 200
+- **Lint**: 0 errors, 0 warnings (after fixing React 19 strict-mode issues)
+- **Database**: SQLite (Prisma ORM) — unchanged
+- **Pipeline Service**: Still NOT running (ML deps not available in sandbox)
+
+### Completed Modifications (Round 8)
+
+#### [Mandatory] Styling Improvements (Task 2-a) ✅
+1. **globals.css** — 11 new CSS utility classes & animations:
+   - `.glass-card`, `.gradient-border`, `.animate-ripple`, `.hover-lift`, `.shine-effect`
+   - `.text-glow`, `.backdrop-blur-strong`, `.animate-marquee`, `.border-glow`
+   - `.stagger-1` through `.stagger-8` animation-delay utilities
+2. **page.tsx CTA Section** — Animated gradient mesh background, 5 floating decorative shapes, pulsing ring + glow on CTA button, shine-effect sweep, hover-lift on secondary button
+3. **page.tsx Footer** — Amber gradient glow line, marquee-scrolling tech badges with fade-edge overlays
+
+#### [Mandatory] New Features (Task 3) ✅
+1. **Toast Notifications for Job Events** — Completion, failure, cancellation, stuck-detection toasts via `useJobProgress` hook
+2. **Voice Selector with Grouping & Search** — New `voice-selector.tsx` replacing flat 55+ item dropdown with 16 language groups, search, gender filter, preview button
+3. **Theme Persistence** — `storageKey="mrs-theme"` on NextThemesProvider in `providers.tsx`
+4. **Job Comparison Dialog** — New `job-comparison.tsx`: select 2 jobs, view 12-row side-by-side comparison with progress bars
+5. **Keyboard Navigation for Search Results** — Arrow keys, Enter to select, visual ring highlight, auto-scroll
+
+#### Lint Fixes Applied ✅
+- Fixed JSX parse error in page.tsx (unclosed comment `{/* Fade edges */`)
+- Fixed JSX parse error in job-comparison.tsx (malformed comment `/* Comparison mode */}`)
+- Fixed React 19 `react-hooks/refs` errors in `use-job-progress.ts` — moved ref resets to separate `useEffect`, kept state resets in render-time pattern
+- Fixed React 19 `react-hooks/set-state-in-effect` in `voice-selector.tsx` — converted to render-time pattern with `prevOpen` state
+- Fixed React 19 `react-hooks/set-state-in-effect` in `job-comparison.tsx` — same render-time pattern fix
+- Restored missing `Select` component imports in `manga-config.tsx` (removed accidentally during voice-selector integration)
+
+### Verification Results
+- ✅ `bun run lint` — 0 errors, 0 warnings
+- ✅ Dev server compiles page successfully — GET / 200
+- ✅ All new features use existing theme system (oklch amber, shadcn/ui)
+- ✅ React 19 strict-mode compliance verified
+
+### Updated Component Count
+- **22 pipeline components**: search-section, manga-config, job-progress, job-history, how-it-works, features-grid, faq, testimonials, trending-searches, stats-bar, activity-feed, bookmarks-section, settings-dialog, onboarding-tour, connection-indicator, section-heading, log-stream, chapter-grid, video-result, pipeline-stats, **voice-selector** (NEW), **job-comparison** (NEW)
+
+---
+## Unresolved Issues & Next-Phase Recommendations
+
+### Known Issues
+1. **Dev Server Stability**: Intermittent OOM kills in sandbox. Mitigated with background restart. NOT a code issue.
+2. **Caddy Proxy 502**: Caddy on port 81 can't reach port 3000. Dev server works directly on port 3000.
+3. **Pipeline Service Not Running**: Python service on port 3001 requires ML dependencies not in sandbox. Full pipeline cannot execute end-to-end.
+4. **React 19 Lint Strictness**: The `react-hooks/refs` and `react-hooks/set-state-in-effect` rules require careful patterns (render-time state derivation + separate ref-cleanup effects). Future code must follow these patterns.
+
+### Recommended Next-Phase Priorities
+1. **[HIGH] Add notification center (bell dropdown)** — Aggregate recent events (job completions, errors) in a bell icon dropdown with timestamped list
+2. **[HIGH] Command palette (Cmd+K)** — Quick navigation to search, bookmarks, settings, recent jobs
+3. **[MEDIUM] Chapter page preview thumbnails** — Show thumbnail previews of chapter pages before starting pipeline
+4. **[MEDIUM] Recently viewed manga tracking** — Track and display recently viewed manga with covers
+5. **[MEDIUM] Enhance pipeline stats with real-time updates** — Poll API periodically or use socket for live stats
+6. **[LOW] PWA support** — Service worker + manifest for offline-capable installable app
+7. **[LOW] Accessibility audit** — Full keyboard navigation, ARIA labels, screen reader testing

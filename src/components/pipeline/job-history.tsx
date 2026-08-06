@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useSectionObserver } from "@/hooks/use-section-observer";
+import { JobComparison } from "@/components/pipeline/job-comparison";
 import type { JobSummary, JobStatus } from "@/types/pipeline";
 
 interface JobHistoryProps {
@@ -157,20 +158,23 @@ export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
           </span>
         )}
         {jobs.length > 0 && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => exportJobsCsv(jobs)}
-                className="ml-auto gap-1.5 text-xs"
-              >
-                <Download className="h-3.5 w-3.5" />
-                Export CSV
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Export as CSV</TooltipContent>
-          </Tooltip>
+          <div className="ml-auto flex items-center gap-1.5">
+            <JobComparison jobs={jobs} />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => exportJobsCsv(jobs)}
+                  className="gap-1.5 text-xs"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Export CSV
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Export as CSV</TooltipContent>
+            </Tooltip>
+          </div>
         )}
         <button
           onClick={() => setOpen((o) => !o)}

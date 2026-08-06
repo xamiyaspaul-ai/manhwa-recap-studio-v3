@@ -408,3 +408,145 @@
 .animate-breathe {
   animation: breathe 4s ease-in-out infinite;
 }
+
+/* === NEW UTILITY CLASSES & ANIMATIONS === */
+
+/* Glassmorphism card with border, shadow, and backdrop blur */
+.glass-card {
+  background: oklch(0.17 0.006 75 / 0.5);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid oklch(0.78 0.17 65 / 0.12);
+  box-shadow: 0 4px 24px -4px oklch(0 0 0 / 0.3), 0 0 0 1px oklch(0.78 0.17 65 / 0.05);
+}
+:root:not(.dark) .glass-card {
+  background: oklch(1 0 0 / 0.65);
+  border-color: oklch(0.55 0.18 65 / 0.15);
+  box-shadow: 0 4px 24px -4px oklch(0 0 0 / 0.08), 0 0 0 1px oklch(0.55 0.18 65 / 0.08);
+}
+
+/* Animated gradient border (rotating conic gradient) */
+.gradient-border {
+  position: relative;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.gradient-border::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from 0deg,
+    oklch(0.78 0.17 65 / 0.6),
+    oklch(0.72 0.18 45 / 0.2),
+    oklch(0.85 0.15 75 / 0.4),
+    oklch(0.78 0.17 65 / 0.6)
+  );
+  animation: gradient-rotate 4s linear infinite;
+  z-index: -1;
+}
+.gradient-border::after {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: inherit;
+  background: var(--card);
+  z-index: -1;
+}
+
+/* Ripple effect for button clicks */
+@keyframes ripple {
+  0% { transform: scale(0); opacity: 0.5; }
+  100% { transform: scale(4); opacity: 0; }
+}
+.animate-ripple {
+  animation: ripple 0.6s ease-out;
+}
+
+/* Slide up stagger for list animations */
+@keyframes slide-up-stagger {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Hover lift with shadow increase */
+.hover-lift {
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px -8px oklch(0 0 0 / 0.4), 0 0 0 1px oklch(0.78 0.17 65 / 0.08);
+}
+:root:not(.dark) .hover-lift:hover {
+  box-shadow: 0 8px 30px -8px oklch(0 0 0 / 0.1), 0 0 0 1px oklch(0.55 0.18 65 / 0.1);
+}
+
+/* Shine/reflection sweep on hover */
+.shine-effect {
+  position: relative;
+  overflow: hidden;
+}
+.shine-effect::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    oklch(0.98 0.005 75 / 0.12),
+    transparent
+  );
+  transition: left 0.6s ease;
+  z-index: 1;
+  pointer-events: none;
+}
+.shine-effect:hover::before {
+  left: 150%;
+}
+
+/* Subtle text glow for primary colored text */
+.text-glow {
+  color: var(--primary);
+  text-shadow: 0 0 20px oklch(0.78 0.17 65 / 0.4), 0 0 40px oklch(0.78 0.17 65 / 0.15);
+}
+:root:not(.dark) .text-glow {
+  text-shadow: 0 0 20px oklch(0.55 0.18 65 / 0.3), 0 0 40px oklch(0.55 0.18 65 / 0.1);
+}
+
+/* Stronger backdrop blur */
+.backdrop-blur-strong {
+  backdrop-filter: blur(24px) saturate(200%);
+  -webkit-backdrop-filter: blur(24px) saturate(200%);
+}
+
+/* Marquee scroll for badges */
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.animate-marquee {
+  animation: marquee 30s linear infinite;
+}
+
+/* Animated border glow for focused/active elements */
+@keyframes border-glow-anim {
+  0%, 100% { border-color: oklch(0.78 0.17 65 / 0.25); box-shadow: 0 0 0 0 oklch(0.78 0.17 65 / 0); }
+  50% { border-color: oklch(0.78 0.17 65 / 0.6); box-shadow: 0 0 12px 2px oklch(0.78 0.17 65 / 0.12); }
+}
+.border-glow {
+  animation: border-glow-anim 2s ease-in-out infinite;
+}
+
+/* Stagger delay utilities for children animations */
+.stagger-1 { animation-delay: 100ms; }
+.stagger-2 { animation-delay: 200ms; }
+.stagger-3 { animation-delay: 300ms; }
+.stagger-4 { animation-delay: 400ms; }
+.stagger-5 { animation-delay: 500ms; }
+.stagger-6 { animation-delay: 600ms; }
+.stagger-7 { animation-delay: 700ms; }
+.stagger-8 { animation-delay: 800ms; }

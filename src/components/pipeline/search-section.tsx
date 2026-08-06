@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { useSectionObserver } from "@/hooks/use-section-observer";
 import { useSearchHistory } from "@/hooks/use-search-history";
+import { cn } from "@/lib/utils";
 import type { MangadexManga, MangaSource } from "@/types/pipeline";
 
 interface SearchSectionProps {
@@ -136,8 +137,10 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
     const [searchDuration, setSearchDuration] = useState<number | null>(null);
     const [inputFocused, setInputFocused] = useState(false);
     const [poppedBookmark, setPoppedBookmark] = useState<string | null>(null);
+    const [focusedResultIdx, setFocusedResultIdx] = useState(-1);
     const searchStartTime = useRef<number>(0);
     const historyPanelRef = useRef<HTMLDivElement>(null);
+    const resultsGridRef = useRef<HTMLDivElement>(null);
 
     // Click outside detection for history panel
     useEffect(() => {
@@ -326,6 +329,47 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
 
     const showHistory = inputFocused && query === "" && !hasSearched;
 
+    // Reset focused index when results change
+    useEffect(() => {
+      setFocusedResultIdx(-1);
+    }, [visibleResults.length]);
+
+    // Keyboard navigation for search results
+    const handleInputKeyDown = useCallback((e: React.KeyboardEvent) => {
+      if (visibleResults.length === 0) return;
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setFocusedResultIdx((prev) => {
+          const next = prev < visibleResults.length - 1 ? prev + 1 : 0;
+          // Scroll into view
+          const grid = resultsGridRef.current;
+          if (grid) {
+            const items = grid.querySelectorAll<HTMLElement>("[data-result-index]");
+            items[next]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          }
+          return next;
+        });
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setFocusedResultIdx((prev) => {
+          const next = prev > 0 ? prev - 1 : visibleResults.length - 1;
+          const grid = resultsGridRef.current;
+          if (grid) {
+            const items = grid.querySelectorAll<HTMLElement>("[data-result-index]");
+            items[next]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          }
+          return next;
+        });
+      } else if (e.key === "Enter" && focusedResultIdx >= 0 && focusedResultIdx < visibleResults.length) {
+        e.preventDefault();
+        handleSelect(visibleResults[focusedResultIdx]);
+      } else if (e.key === "Escape") {
+        setFocusedResultIdx(-1);
+        (e.target as HTMLInputElement).blur();
+      }
+    }, [visibleResults, focusedResultIdx, handleSelect]);
+
     return (
       <section ref={sectionRef} className="space-y-6">
         {/* Hero with glow orbs */}
@@ -417,6 +461,7 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
               onChange={(e) => setQuery(e.target.value)}
               onFocus={() => setInputFocused(true)}
               onBlur={() => setTimeout(() => setInputFocused(false), 200)}
+              onKeyDown={handleInputKeyDown}
               placeholder="e.g. Solo Leveling, Tower of God, One Piece…"
               className="pl-11 h-13 text-base bg-card/80 border-border/80 backdrop-blur-sm focus:bg-card transition-all shadow-sm focus:shadow-md focus:shadow-primary/5 rounded-xl"
               autoFocus
@@ -621,7 +666,7 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
         )}
 
         {visibleResults.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 sm:gap-4">
+          <div ref={resultsGridRef} className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 sm:gap-4">
             {visibleResults.map((m, idx) => {
               const source = m.source ?? "mangahere";
               const isResolving = resolvingId === m.id;
@@ -637,16 +682,21 @@ const SearchSection = forwardRef<SearchSectionHandle, SearchSectionProps>(
               return (
                 <div
                   key={m.id}
+                  data-result-index={idx}
                   onClick={() => !isResolving && handleSelect(m)}
                   role="button"
-                  tabIndex={0}
+                  tabIndex={-1}
+                  onMouseEnter={() => setFocusedResultIdx(idx)}
                   onKeyDown={(e) => {
                     if ((e.key === "Enter" || e.key === " ") && !isResolving) {
                       e.preventDefault();
                       handleSelect(m);
                     }
                   }}
-                  className="group text-left space-y-2 transition-all duration-300 hover:scale-[1.03] hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-ring rounded-lg disabled:opacity-60 disabled:hover:scale-100 cursor-pointer animate-item-in"
+                  className={cn(
+                    "group text-left space-y-2 transition-all duration-300 hover:scale-[1.03] hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-ring rounded-lg disabled:opacity-60 disabled:hover:scale-100 cursor-pointer animate-item-in",
+                    focusedResultIdx === idx && "ring-2 ring-primary/60 bg-accent/30 scale-[1.03] -translate-y-1"
+                  )}
                   style={{ animationDelay: `${idx * 40}ms` }}
                 >
                   <div className="aspect-[3/4] rounded-xl overflow-hidden bg-muted border border-border relative group-hover:border-primary/40 group-hover:shadow-lg group-hover:shadow-primary/5 transition-all duration-300">
