@@ -1,15 +1,16 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Settings, Loader2, Download, Upload, RotateCcw } from "lucide-react";
+import { Settings, Loader2, Download, Upload, RotateCcw, X } from "lucide-react";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog";
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerClose,
+} from "@/components/ui/drawer";
 import {
   Select,
   SelectContent,
@@ -200,28 +201,32 @@ export function SettingsDialog() {
 
       <input ref={fileInputRef} type="file" accept=".json" className="hidden" onChange={handleImport} />
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto scrollbar-thin">
-          <DialogHeader>
-            <div className="flex items-center gap-2">
-              <div className="p-1.5 rounded-lg bg-primary/10">
-                <Settings className="h-4 w-4 text-primary" />
-              </div>
-              <div>
-                <DialogTitle>Settings</DialogTitle>
-                <DialogDescription className="mt-0.5">
-                  Configure your default pipeline preferences and API keys.
-                </DialogDescription>
-              </div>
+      <Drawer open={open} onOpenChange={setOpen} direction="right" dismissible handleOnly>
+        <DrawerContent className="data-[vaul-drawer-direction=right]:sm:max-w-md overflow-hidden">
+          <DrawerHeader className="flex-row items-center gap-2 px-6 py-4 shrink-0">
+            <div className="p-1.5 rounded-lg bg-primary/10">
+              <Settings className="h-4 w-4 text-primary" />
             </div>
-          </DialogHeader>
+            <div className="flex-1 min-w-0">
+              <DrawerTitle>Settings</DrawerTitle>
+              <DrawerDescription className="mt-0.5">
+                Configure your default pipeline preferences and API keys.
+              </DrawerDescription>
+            </div>
+            <DrawerClose asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 rounded-lg hover:bg-muted/50">
+                <X className="h-4 w-4" />
+                <span className="sr-only">Close</span>
+              </Button>
+            </DrawerClose>
+          </DrawerHeader>
 
           {loading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
           ) : (
-            <div className="space-y-5">
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5 scrollbar-thin">
               {/* Voice & Language row */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -352,7 +357,7 @@ export function SettingsDialog() {
           )}
 
           {!loading && (
-            <DialogFooter className="flex-col sm:flex-row gap-2">
+            <DrawerFooter className="flex-col sm:flex-row gap-2 px-6 border-t border-border">
               <div className="flex items-center gap-1 sm:ml-auto">
                 <Button
                   variant="ghost"
@@ -394,10 +399,10 @@ export function SettingsDialog() {
                   Save
                 </Button>
               </div>
-            </DialogFooter>
+            </DrawerFooter>
           )}
-        </DialogContent>
-      </Dialog>
+        </DrawerContent>
+      </Drawer>
     </>
   );
 }

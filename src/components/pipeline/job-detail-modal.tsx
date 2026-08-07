@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo, useCallback } from "react";
-import { AlertCircle, Cloud, Download } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertCircle, Cloud, Download, X } from "lucide-react";
+import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerClose } from "@/components/ui/drawer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -144,44 +144,48 @@ export function JobDetailModal({ job, open, onClose }: JobDetailModalProps) {
   }, [job, toast]);
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto scrollbar-thin bg-popover border-border rounded-xl p-0 gap-0 animate-fade-in-scale">
-        <div className="sticky top-0 z-10 bg-popover/95 backdrop-blur-sm border-b border-border px-6 py-4">
-          <DialogHeader className="flex flex-row items-center gap-3">
-            <div className="flex-1 min-w-0">
-              <DialogTitle className="text-base font-semibold truncate pr-8">
-                {job?.mangaTitle ?? "Job Details"}
-              </DialogTitle>
-            </div>
-            {job && (
-              <>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 px-2.5 text-xs gap-1.5 rounded-lg border-border hover:border-primary/30 hover:bg-primary/5 transition-colors"
-                  onClick={handleExportConfig}
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Export Config</span>
-                </Button>
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    "shrink-0 gap-1.5 text-[11px] font-medium border",
-                    statusConfig[job.status].color,
-                  )}
-                >
-                  <span className={cn("h-1.5 w-1.5 rounded-full", statusConfig[job.status].dotColor)} />
-                  {statusConfig[job.status].label}
-                </Badge>
-              </>
-            )}
-          </DialogHeader>
-        </div>
+    <Drawer open={open} onOpenChange={(v) => { if (!v) onClose(); }} direction="right" dismissible handleOnly>
+      <DrawerContent className="data-[vaul-drawer-direction=right]:sm:max-w-2xl overflow-hidden bg-popover border-border">
+        <DrawerHeader className="flex-row items-center gap-3 border-b border-border px-6 py-4 shrink-0 bg-popover/95 backdrop-blur-sm">
+          <div className="flex-1 min-w-0">
+            <DrawerTitle className="text-base font-semibold truncate">
+              {job?.mangaTitle ?? "Job Details"}
+            </DrawerTitle>
+          </div>
+          {job && (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 px-2.5 text-xs gap-1.5 rounded-lg border-border hover:border-primary/30 hover:bg-primary/5 transition-colors"
+                onClick={handleExportConfig}
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Export Config</span>
+              </Button>
+              <Badge
+                variant="outline"
+                className={cn(
+                  "shrink-0 gap-1.5 text-[11px] font-medium border",
+                  statusConfig[job.status].color,
+                )}
+              >
+                <span className={cn("h-1.5 w-1.5 rounded-full", statusConfig[job.status].dotColor)} />
+                {statusConfig[job.status].label}
+              </Badge>
+            </>
+          )}
+          <DrawerClose asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 rounded-lg hover:bg-muted/50">
+              <X className="h-4 w-4" />
+              <span className="sr-only">Close</span>
+            </Button>
+          </DrawerClose>
+        </DrawerHeader>
 
         {job && (
-          <div className="px-6 py-4 space-y-5">
+          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5 scrollbar-thin">
             <div className="grid grid-cols-2 gap-x-6 gap-y-4">
               <div className="col-span-2 sm:col-span-1">
                 <p className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground mb-1.5">Progress</p>
@@ -330,7 +334,7 @@ export function JobDetailModal({ job, open, onClose }: JobDetailModalProps) {
             )}
           </div>
         )}
-      </DialogContent>
-    </Dialog>
+      </DrawerContent>
+    </Drawer>
   );
 }
