@@ -7,7 +7,7 @@ import {
 } from "@/lib/scrapers";
 import { outputDir } from "@/lib/paths";
 import { mapJob } from "@/lib/serialize";
-import type { CreateJobInput, JobSummary } from "@/types/pipeline";
+import type { CreateJobInput, JobDetail } from "@/types/pipeline";
 
 export const dynamic = "force-dynamic";
 
@@ -46,7 +46,7 @@ export async function GET() {
       include: { _count: { select: { chapters: true } } },
     });
 
-    const summaries: JobSummary[] = jobs.map((j) =>
+    const jobs_: JobDetail[] = jobs.map((j) =>
       mapJob({
         ...j,
         // List view: omit chapter detail, but expose totalChapters for UI.
@@ -54,7 +54,7 @@ export async function GET() {
       })
     );
 
-    return NextResponse.json({ jobs: summaries });
+    return NextResponse.json({ jobs: jobs_ });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(
@@ -199,7 +199,7 @@ export async function POST(req: NextRequest) {
       data: { outputDir: outputDir(job.id) },
     });
 
-    const summary = mapJob({
+    const detail = mapJob({
       ...job,
       outputDir: outputDir(job.id),
     });
@@ -208,7 +208,7 @@ export async function POST(req: NextRequest) {
     //    Non-blocking — pipeline runs in the background and pushes progress over WS.
     void notifyPipeline("/internal/start", { jobId: job.id });
 
-    return NextResponse.json({ job: summary }, { status: 201 });
+    return NextResponse.json({ job: detail }, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(

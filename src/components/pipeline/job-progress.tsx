@@ -21,11 +21,11 @@ import { Badge } from "@/components/ui/badge";
 import { ChapterGrid } from "./chapter-grid";
 import { LogStream } from "./log-stream";
 import { VideoResult } from "./video-result";
-import type { JobSummary, JobLogEntry } from "@/types/pipeline";
+import type { JobDetail, JobLogEntry } from "@/types/pipeline";
 import { cn } from "@/lib/utils";
 
 interface JobProgressProps {
-  job: JobSummary | null;
+  job: JobDetail | null;
   logs: JobLogEntry[];
   connected: boolean;
   onCancel: () => void;
@@ -47,20 +47,19 @@ const PIPELINE_STAGES: StageInfo[] = [
   { key: "done", label: "Done", icon: CheckCircle2 },
 ];
 
-function getActiveStageIndex(job: JobSummary | null): number {
+function getActiveStageIndex(job: JobDetail | null): number {
   if (!job) return -1;
   if (job.status === "done") return PIPELINE_STAGES.length - 1;
   if (job.status === "error" || job.status === "cancelled") return -1;
   const statusMap: Record<string, number> = {
     pending: 0,
     scraping: 1,
-    summarizing: 2,
+    transcribing: 2,
     rendering: 4,
   };
   const stageMap: Record<string, number> = {
     search: 0,
     scrape: 1,
-    summarize: 2,
     transcribe: 2,
     translate: 2,
     slice: 3,
@@ -270,7 +269,7 @@ export function JobProgress({ job, logs, connected, onCancel, onNewJob }: JobPro
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold">Chapters</h3>
             <span className="text-xs text-muted-foreground">
-              {job.chapters.filter((c) => c.rendered || c.summarized || c.status === "scraped").length}/{job.chapters.length} processed
+              {job.chapters.filter((c) => c.rendered || c.transcribed || c.status === "scraped").length}/{job.chapters.length} processed
             </span>
           </div>
           <ChapterGrid chapters={job.chapters} jobId={job.id} />

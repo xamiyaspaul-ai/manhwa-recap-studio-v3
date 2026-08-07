@@ -13,12 +13,12 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useSectionObserver } from "@/hooks/use-section-observer";
-import type { JobSummary, JobStatus } from "@/types/pipeline";
+import type { JobDetail, JobStatus } from "@/types/pipeline";
 
 const ACTIVE_STATUSES = new Set<JobStatus>([
   "pending",
   "scraping",
-  "summarizing",
+  "transcribing",
   "translating",
   "rendering",
   "merging",
@@ -44,7 +44,7 @@ const STATUS_BAR_COLORS: Record<string, { bg: string; label: string }> = {
 const STATUS_ICON_MAP: Record<JobStatus, { color: string; bg: string }> = {
   pending: { color: "text-amber-400", bg: "bg-amber-500/10 border-amber-500/20" },
   scraping: { color: "text-amber-400", bg: "bg-amber-500/10 border-amber-500/20" },
-  summarizing: { color: "text-orange-400", bg: "bg-orange-500/10 border-orange-500/20" },
+  transcribing: { color: "text-orange-400", bg: "bg-orange-500/10 border-orange-500/20" },
   translating: { color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20" },
   rendering: { color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
   merging: { color: "text-teal-400", bg: "bg-teal-500/10 border-teal-500/20" },
@@ -54,7 +54,7 @@ const STATUS_ICON_MAP: Record<JobStatus, { color: string; bg: string }> = {
 };
 
 export function PipelineStats() {
-  const [jobs, setJobs] = useState<JobSummary[]>([]);
+  const [jobs, setJobs] = useState<JobDetail[]>([]);
   const [loading, setLoading] = useState(true);
   const [polling, setPolling] = useState(false);
   const { ref, isVisible } = useSectionObserver(0.05);

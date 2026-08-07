@@ -1,7 +1,7 @@
 import type {
   ChapterInfo,
   JobLogEntry,
-  JobSummary,
+  JobDetail,
   JobStatus,
 } from "@/types/pipeline";
 
@@ -14,7 +14,7 @@ type ChapterRow = {
   language: string;
   pageCount: number;
   translated: boolean;
-  summarized: boolean;
+  transcribed: boolean;
   rendered: boolean;
   status: string;
   error: string | null;
@@ -67,14 +67,14 @@ export function mapChapter(c: ChapterRow): ChapterInfo {
     language: c.language,
     pageCount: c.pageCount,
     translated: c.translated,
-    summarized: c.summarized,
+    transcribed: c.transcribed,
     rendered: c.rendered,
     status: c.status,
     error: c.error,
   };
 }
 
-export function mapJob(job: JobRow): JobSummary {
+export function mapJob(job: JobRow): JobDetail {
   return {
     id: job.id,
     mangaId: job.mangaId,

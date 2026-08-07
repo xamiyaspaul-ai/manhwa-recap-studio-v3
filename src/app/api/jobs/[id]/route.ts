@@ -56,10 +56,10 @@ export async function GET(
       return NextResponse.json({ error: "Job not found." }, { status: 404 });
     }
 
-    const summary = mapJob(job);
+    const detail = mapJob(job);
     const logs = job.logs.map(mapLog).reverse(); // newest last for streaming display
 
-    return NextResponse.json({ job: summary, logs });
+    return NextResponse.json({ job: detail, logs });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(
@@ -72,7 +72,7 @@ export async function GET(
 const ACTIVE_STATUSES = new Set([
   "pending",
   "scraping",
-  "summarizing",
+  "transcribing",
   "translating",
   "rendering",
   "merging",

@@ -8,10 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import type { JobSummary, JobStatus, ChapterInfo } from "@/types/pipeline";
+import type { JobDetail, JobStatus, ChapterInfo } from "@/types/pipeline";
 
 interface JobDetailModalProps {
-  job: JobSummary | null;
+  job: JobDetail | null;
   open: boolean;
   onClose: () => void;
 }
@@ -19,7 +19,7 @@ interface JobDetailModalProps {
 const statusConfig: Record<JobStatus, { label: string; color: string; dotColor: string }> = {
   pending: { label: "Pending", color: "bg-amber-500/15 text-amber-400 border-amber-500/25", dotColor: "bg-amber-400" },
   scraping: { label: "Scraping", color: "bg-amber-500/15 text-amber-400 border-amber-500/25", dotColor: "bg-amber-400" },
-  summarizing: { label: "Summarizing", color: "bg-orange-500/15 text-orange-400 border-orange-500/25", dotColor: "bg-orange-400" },
+  transcribing: { label: "Transcribing", color: "bg-orange-500/15 text-orange-400 border-orange-500/25", dotColor: "bg-orange-400" },
   translating: { label: "Translating", color: "bg-purple-500/15 text-purple-400 border-purple-500/25", dotColor: "bg-purple-400" },
   rendering: { label: "Rendering", color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/25", dotColor: "bg-emerald-400" },
   merging: { label: "Merging", color: "bg-teal-500/15 text-teal-400 border-teal-500/25", dotColor: "bg-teal-400" },
@@ -75,8 +75,8 @@ function ChapterStatusDot({ status }: { status: string }) {
     completed: "bg-emerald-400",
     rendering: "bg-emerald-400",
     rendered: "bg-emerald-400",
-    summarizing: "bg-orange-400",
-    summarized: "bg-orange-400",
+    transcribing: "bg-orange-400",
+    transcribed: "bg-orange-400",
     translating: "bg-purple-400",
     translated: "bg-purple-400",
     scraping: "bg-amber-400",
@@ -93,7 +93,7 @@ function chapterProgress(ch: ChapterInfo): number {
   if (ch.status === "done" || ch.status === "completed") return 100;
   if (ch.status === "rendered" || ch.status === "rendering") return 75;
   if (ch.status === "translated" || ch.status === "translating") return 50;
-  if (ch.status === "summarized" || ch.status === "summarizing") return 30;
+  if (ch.status === "transcribed" || ch.status === "transcribing") return 30;
   if (ch.status === "scraped" || ch.status === "scraping") return 15;
   return 0;
 }

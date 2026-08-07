@@ -3,7 +3,7 @@
 export type JobStatus =
   | "pending"
   | "scraping"
-  | "summarizing"
+  | "transcribing"
   | "translating"
   | "rendering"
   | "merging"
@@ -14,7 +14,7 @@ export type JobStatus =
 export type Stage =
   | "search"
   | "scrape"
-  | "summarize"
+  | "transcribe"
   | "translate"
   | "slice"
   | "narrate"
@@ -68,13 +68,13 @@ export interface ChapterInfo {
   language: string;
   pageCount: number;
   translated: boolean;
-  summarized: boolean;
+  transcribed: boolean;
   rendered: boolean;
   status: string;
   error: string | null;
 }
 
-export interface JobSummary {
+export interface JobDetail {
   id: string;
   mangaId: string;
   mangaTitle: string;
@@ -124,7 +124,7 @@ export type ClientEvent =
 // WebSocket events (server -> client)
 export type ServerEvent =
   | { type: "subscribed"; jobId: string }
-  | { type: "status"; job: JobSummary }
+  | { type: "status"; job: JobDetail }
   | { type: "log"; log: JobLogEntry }
   | { type: "progress"; jobId: string; progress: number; doneChapters: number; totalChapters: number; doneImages: number; totalImages: number; stage: string; message: string }
   | { type: "chapter"; jobId: string; chapter: ChapterInfo }

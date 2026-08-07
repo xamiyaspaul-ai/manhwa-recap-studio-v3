@@ -94,7 +94,7 @@ model Chapter {
   language    String
   pageCount   Int      @default(0)
   translated  Boolean  @default(false)
-  summarized  Boolean  @default(false)
+  transcribed Boolean  @default(false)
   rendered    Boolean  @default(false)
   folder      String
   status      String   @default("pending")

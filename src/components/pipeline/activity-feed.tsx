@@ -18,7 +18,7 @@ interface Activity {
 const STATUS_CONFIG: Record<JobStatus, { icon: typeof CheckCircle2; color: string; label: string; bg: string }> = {
   pending: { icon: Clock, color: "text-amber-400", label: "Queued", bg: "bg-amber-500/10" },
   scraping: { icon: Loader2, color: "text-amber-400", label: "Scraping", bg: "bg-amber-500/10" },
-  summarizing: { icon: Loader2, color: "text-orange-400", label: "Transcribing", bg: "bg-orange-500/10" },
+  transcribing: { icon: Loader2, color: "text-orange-400", label: "Transcribing", bg: "bg-orange-500/10" },
   translating: { icon: Loader2, color: "text-purple-400", label: "Translating", bg: "bg-purple-500/10" },
   rendering: { icon: Loader2, color: "text-emerald-400", label: "Rendering", bg: "bg-emerald-500/10" },
   merging: { icon: Loader2, color: "text-teal-400", label: "Merging", bg: "bg-teal-500/10" },
@@ -97,7 +97,7 @@ export function ActivityFeed() {
             const cfg = STATUS_CONFIG[a.status] ?? STATUS_CONFIG.pending;
             const Icon = cfg.icon;
             const isDone = a.status === "done";
-            const isActive = ["scraping", "summarizing", "translating", "rendering", "merging"].includes(a.status);
+            const isActive = ["scraping", "transcribing", "translating", "rendering", "merging"].includes(a.status);
             const statusBorderColor = isDone
               ? "border-l-emerald-500/40"
               : isActive

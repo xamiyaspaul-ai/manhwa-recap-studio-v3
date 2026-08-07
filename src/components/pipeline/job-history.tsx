@@ -8,7 +8,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
 import { useSectionObserver } from "@/hooks/use-section-observer";
 import { JobComparison } from "@/components/pipeline/job-comparison";
 import { JobDetailModal } from "@/components/pipeline/job-detail-modal";
-import type { JobSummary, JobStatus } from "@/types/pipeline";
+import type { JobDetail, JobStatus } from "@/types/pipeline";
 
 interface JobHistoryProps {
   onSelectJob: (jobId: string) => void;
@@ -18,7 +18,7 @@ interface JobHistoryProps {
 const statusIcon: Record<JobStatus, typeof Clock> = {
   pending: Clock,
   scraping: Loader2,
-  summarizing: Loader2,
+  transcribing: Loader2,
   translating: Loader2,
   rendering: Loader2,
   merging: Loader2,
@@ -30,7 +30,7 @@ const statusIcon: Record<JobStatus, typeof Clock> = {
 const statusColor: Record<JobStatus, string> = {
   pending: "text-amber-400",
   scraping: "text-amber-400",
-  summarizing: "text-orange-400",
+  transcribing: "text-orange-400",
   translating: "text-purple-400",
   rendering: "text-emerald-400",
   merging: "text-teal-400",
@@ -42,7 +42,7 @@ const statusColor: Record<JobStatus, string> = {
 const statusBgColor: Record<JobStatus, string> = {
   pending: "bg-amber-500/10 border-amber-500/20",
   scraping: "bg-amber-500/10 border-amber-500/20",
-  summarizing: "bg-orange-500/10 border-orange-500/20",
+  transcribing: "bg-orange-500/10 border-orange-500/20",
   translating: "bg-purple-500/10 border-purple-500/20",
   rendering: "bg-emerald-500/10 border-emerald-500/20",
   merging: "bg-teal-500/10 border-teal-500/20",
@@ -54,7 +54,7 @@ const statusBgColor: Record<JobStatus, string> = {
 const ACTIVE_STATUSES = new Set<JobStatus>([
   "pending",
   "scraping",
-  "summarizing",
+  "transcribing",
   "translating",
   "rendering",
   "merging",
@@ -70,7 +70,7 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-function exportJobsCsv(jobs: JobSummary[]) {
+function exportJobsCsv(jobs: JobDetail[]) {
   const header = ["ID", "Title", "Status", "Progress", "Chapters", "Images", "Voice", "Language", "Created", "Updated"];
   const rows = jobs.map((j) => [
     j.id,
@@ -97,11 +97,11 @@ function exportJobsCsv(jobs: JobSummary[]) {
 }
 
 export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
-  const [jobs, setJobs] = useState<JobSummary[]>([]);
+  const [jobs, setJobs] = useState<JobDetail[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [detailJob, setDetailJob] = useState<JobSummary | null>(null);
+  const [detailJob, setDetailJob] = useState<JobDetail | null>(null);
   const { ref, isVisible } = useSectionObserver(0.05);
 
   useEffect(() => {
@@ -120,7 +120,7 @@ export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
     };
   }, [refreshKey]);
 
-  const handleDelete = async (e: React.MouseEvent, job: JobSummary) => {
+  const handleDelete = async (e: React.MouseEvent, job: JobDetail) => {
     e.stopPropagation();
     const isActive = ACTIVE_STATUSES.has(job.status);
     const confirmMsg = isActive
@@ -226,7 +226,7 @@ export function JobHistory({ onSelectJob, refreshKey }: JobHistoryProps) {
         <div className="space-y-2 max-h-96 overflow-y-auto scrollbar-thin">
           {jobs.map((job) => {
             const Icon = statusIcon[job.status] ?? Clock;
-            const spinning = ["scraping", "summarizing", "translating", "rendering", "merging"].includes(job.status);
+            const spinning = ["scraping", "transcribing", "translating", "rendering", "merging"].includes(job.status);
             const isDone = job.status === "done";
             return (
               <div

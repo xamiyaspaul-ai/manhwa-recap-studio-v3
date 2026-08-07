@@ -840,7 +840,7 @@ export async function downloadImageForSource(
 }
 
 // ---------------------------------------------------------------------------
-// VLM helper — generates per-chapter English summaries from scraped images.
+// VLM helper — lazy-loads z-ai SDK for per-image transcription.
 // ---------------------------------------------------------------------------
 
 let zaiPromise: Promise<unknown> | null = null
@@ -855,9 +855,6 @@ async function getZai() {
   }
   return await zaiPromise
 }
-
-// generateChapterSummary removed — per-image VLM transcription (generateImageNarrations)
-// replaces the old chapter-level summary approach. No summary.txt needed.
 
 /**
  * Generate per-image narrations: send each image to the VLM individually and

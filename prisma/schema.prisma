@@ -39,7 +39,7 @@ model Job {
   coverUrl    String?
   language    String    @default("en") // requested language
   sourceLang  String?   // actual source language of scraped chapters
-  status      String    @default("pending") // pending|scraping|summarizing|translating|rendering|merging|done|error
+  status      String    @default("pending") // pending|scraping|transcribing|translating|rendering|merging|done|error
   progress    Int       @default(0) // 0-100
   stage       String?   // current stage label
   message     String?   // last log message
@@ -86,10 +86,10 @@ model Chapter {
   language    String
   pageCount   Int      @default(0)
   translated  Boolean  @default(false)
-  summarized  Boolean  @default(false)
+  transcribed Boolean  @default(false)
   rendered    Boolean  @default(false)
   folder      String   // relative path under data/jobs/{jobId}/dataset/
-  status      String   @default("pending") // pending|scraped|summarized|translated|rendered|error
+  status      String   @default("pending") // pending|scraped|transcribed|translated|rendered|error
   error       String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

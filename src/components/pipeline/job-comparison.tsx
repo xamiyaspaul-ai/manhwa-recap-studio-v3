@@ -6,12 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import type { JobSummary, JobStatus } from "@/types/pipeline";
+import type { JobDetail, JobStatus } from "@/types/pipeline";
 
 const statusIcon: Record<JobStatus, typeof Clock> = {
   pending: Clock,
   scraping: Loader2,
-  summarizing: Loader2,
+  transcribing: Loader2,
   translating: Loader2,
   rendering: Loader2,
   merging: Loader2,
@@ -52,7 +52,7 @@ function formatShortVoice(voice: string): string {
 interface ComparisonRow {
   label: string;
   key: string;
-  format?: (val: JobSummary) => React.ReactNode;
+  format?: (val: JobDetail) => React.ReactNode;
 }
 
 const COMPARISON_ROWS: ComparisonRow[] = [
@@ -87,7 +87,7 @@ const COMPARISON_ROWS: ComparisonRow[] = [
 ];
 
 interface JobComparisonProps {
-  jobs: JobSummary[];
+  jobs: JobDetail[];
 }
 
 export function JobComparison({ jobs }: JobComparisonProps) {
@@ -309,7 +309,7 @@ export function JobComparison({ jobs }: JobComparisonProps) {
   );
 }
 
-function JobHeader({ job }: { job: JobSummary }) {
+function JobHeader({ job }: { job: JobDetail }) {
   return (
     <div className="flex items-center gap-2.5 p-2 rounded-lg bg-card border border-border">
       <div className="w-10 h-14 rounded overflow-hidden bg-muted flex-shrink-0 border border-border">
@@ -330,7 +330,7 @@ function JobHeader({ job }: { job: JobSummary }) {
   );
 }
 
-function ProgressCard({ job, label }: { job: JobSummary; label: string }) {
+function ProgressCard({ job, label }: { job: JobDetail; label: string }) {
   const isSuccess = job.status === "done";
   const pct = job.totalChapters > 0 ? Math.round((job.doneChapters / job.totalChapters) * 100) : 0;
   const imgPct = job.totalImages > 0 ? Math.round((job.doneImages / job.totalImages) * 100) : 0;

@@ -9,14 +9,14 @@ interface ChapterGridProps {
   jobId: string;
 }
 
-type CellStatus = "pending" | "scraping" | "scraped" | "summarizing" | "summarized" | "rendering" | "rendered" | "error" | "done";
+type CellStatus = "pending" | "scraping" | "scraped" | "transcribing" | "transcribed" | "rendering" | "rendered" | "error" | "done";
 
 function getCellStatus(c: ChapterInfo): CellStatus {
   if (c.status === "error") return "error";
   if (c.status === "done" || c.rendered) return "rendered";
   if (c.status === "rendering") return "rendering";
-  if (c.summarized || c.status === "summarized") return "summarized";
-  if (c.status === "summarizing") return "summarizing";
+  if (c.transcribed || c.status === "transcribed") return "transcribed";
+  if (c.status === "transcribing") return "transcribing";
   if (c.status === "scraped") return "scraped";
   if (c.status === "scraping") return "scraping";
   return "pending";
@@ -26,8 +26,8 @@ const statusConfig: Record<CellStatus, { color: string; icon: typeof Clock; labe
   pending: { color: "bg-muted text-muted-foreground border-border", icon: Clock, label: "Pending" },
   scraping: { color: "bg-amber-500/15 text-amber-400 border-amber-500/30", icon: Loader2, label: "Scraping" },
   scraped: { color: "bg-amber-500/15 text-amber-400 border-amber-500/30", icon: ImageIcon, label: "Scraped" },
-  summarizing: { color: "bg-orange-500/15 text-orange-400 border-orange-500/30", icon: Loader2, label: "Transcribing" },
-  summarized: { color: "bg-orange-500/15 text-orange-400 border-orange-500/30", icon: FileText, label: "Transcribed" },
+  transcribing: { color: "bg-orange-500/15 text-orange-400 border-orange-500/30", icon: Loader2, label: "Transcribing" },
+  transcribed: { color: "bg-orange-500/15 text-orange-400 border-orange-500/30", icon: FileText, label: "Transcribed" },
   rendering: { color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30", icon: Loader2, label: "Rendering" },
   rendered: { color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30", icon: Film, label: "Rendered" },
   error: { color: "bg-rose-500/15 text-rose-400 border-rose-500/30", icon: AlertCircle, label: "Error" },
@@ -38,8 +38,8 @@ const LEGEND_ITEMS = [
   { status: "pending" as CellStatus, label: "Pending" },
   { status: "scraping" as CellStatus, label: "Scraping" },
   { status: "scraped" as CellStatus, label: "Scraped" },
-  { status: "summarizing" as CellStatus, label: "Transcribing" },
-  { status: "summarized" as CellStatus, label: "Transcribed" },
+  { status: "transcribing" as CellStatus, label: "Transcribing" },
+  { status: "transcribed" as CellStatus, label: "Transcribed" },
   { status: "rendering" as CellStatus, label: "Rendering" },
   { status: "rendered" as CellStatus, label: "Rendered" },
   { status: "error" as CellStatus, label: "Error" },
@@ -52,7 +52,7 @@ export function ChapterGrid({ chapters, jobId }: ChapterGridProps) {
     );
   }
 
-  const processedCount = chapters.filter((c) => c.rendered || c.summarized || c.status === "scraped").length;
+  const processedCount = chapters.filter((c) => c.rendered || c.transcribed || c.status === "scraped").length;
 
   return (
     <div className="space-y-3">
@@ -80,12 +80,12 @@ export function ChapterGrid({ chapters, jobId }: ChapterGridProps) {
           const status = getCellStatus(c);
           const config = statusConfig[status];
           const Icon = config.icon;
-          const spinning = status === "scraping" || status === "summarizing" || status === "rendering";
+          const spinning = status === "scraping" || status === "transcribing" || status === "rendering";
 
           return (
             <a
               key={c.index}
-              href={c.status === "scraped" || c.status === "summarized" || c.status === "rendered" || c.summarized
+              href={c.status === "scraped" || c.status === "transcribed" || c.status === "rendered" || c.transcribed
                 ? `/api/preview/${jobId}/${c.index}/001.jpg`
                 : undefined}
               target={c.status !== "pending" && c.status !== "error" ? "_blank" : undefined}

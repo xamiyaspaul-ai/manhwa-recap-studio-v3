@@ -4,11 +4,11 @@ import { useState, useEffect } from "react";
 import { Download, Film, CheckCircle2, Share2, Image as ImageIcon, BookOpen, Clock, Cloud, CloudUpload, Loader2, HardDrive, Youtube } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import type { JobSummary } from "@/types/pipeline";
+import type { JobDetail } from "@/types/pipeline";
 import { useToast } from "@/hooks/use-toast";
 
 interface VideoResultProps {
-  job: JobSummary;
+  job: JobDetail;
 }
 
 export function VideoResult({ job }: VideoResultProps) {
@@ -290,7 +290,7 @@ export function VideoResult({ job }: VideoResultProps) {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Video includes narrated chapter summaries with text-to-speech audio. Source: {job.mangaTitle} · {job.totalChapters} chapters · {job.totalImages} images.
+        Video includes narrated chapter transcriptions with text-to-speech audio. Source: {job.mangaTitle} · {job.totalChapters} chapters · {job.totalImages} images.
         {archiveProvider && " Local file freed after cloud upload — video streams from cloud on demand."}
       </p>
     </div>

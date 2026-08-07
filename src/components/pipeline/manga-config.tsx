@@ -624,7 +624,7 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
               Auto-translate to English
             </Label>
             <p className="text-xs text-muted-foreground">
-              Uses Groq to translate non-English chapter summaries before narration.
+              Uses Groq to translate non-English transcriptions before narration.
             </p>
           </div>
           <Switch checked={translate} onCheckedChange={setTranslate} />

@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Bell, CheckCircle2, AlertCircle, Clock, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import type { JobSummary, JobStatus } from "@/types/pipeline";
+import type { JobDetail, JobStatus } from "@/types/pipeline";
 
 interface NotificationItem {
   id: string;
@@ -49,7 +49,7 @@ function relativeTime(dateStr: string): string {
   return `${Math.floor(days / 30)}mo ago`;
 }
 
-function jobToNotification(job: JobSummary): NotificationItem {
+function jobToNotification(job: JobDetail): NotificationItem {
   const { icon, iconColor } = getStatusMeta(job.status);
   let description = "";
   switch (job.status) {
@@ -98,7 +98,7 @@ export function NotificationCenter() {
     fetch("/api/jobs")
       .then((res) => res.json())
       .then((data) => {
-        const jobs: JobSummary[] = (data.jobs ?? []).slice(0, 10);
+        const jobs: JobDetail[] = (data.jobs ?? []).slice(0, 10);
         const items = jobs.map(jobToNotification);
         setNotifications(items);
         setHasUnread(

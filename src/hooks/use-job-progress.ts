@@ -3,10 +3,10 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { getSocket } from "@/lib/socket";
 import { toast } from "@/hooks/use-toast";
-import type { JobSummary, JobLogEntry, ChapterInfo, ServerEvent } from "@/types/pipeline";
+import type { JobDetail, JobLogEntry, ChapterInfo, ServerEvent } from "@/types/pipeline";
 
 interface UseJobProgressResult {
-  job: JobSummary | null;
+  job: JobDetail | null;
   logs: JobLogEntry[];
   connected: boolean;
 }
@@ -17,7 +17,7 @@ interface UseJobProgressResult {
  * isn't blank while the socket connects.
  */
 export function useJobProgress(jobId: string | null): UseJobProgressResult {
-  const [job, setJob] = useState<JobSummary | null>(null);
+  const [job, setJob] = useState<JobDetail | null>(null);
   const [logs, setLogs] = useState<JobLogEntry[]>([]);
   const [connected, setConnected] = useState(false);
 

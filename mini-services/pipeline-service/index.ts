@@ -260,7 +260,7 @@ function extractJobId(payload: unknown): string | null {
 // ---------------------------------------------------------------------------
 
 async function emitStatus(jobId: string): Promise<void> {
-  const job = await loadJobSummary(jobId)
+  const job = await loadJobDetail(jobId)
   if (!job) return
   io.to(`job:${jobId}`).emit('status', { type: 'status', job })
 }
@@ -339,7 +339,7 @@ async function emitChapter(jobId: string, chapter: {
   language: string
   pageCount: number
   translated: boolean
-  summarized: boolean
+  transcribed: boolean
   rendered: boolean
   folder: string
   status: string
@@ -356,7 +356,7 @@ async function emitChapter(jobId: string, chapter: {
       language: chapter.language,
       pageCount: chapter.pageCount,
       translated: chapter.translated,
-      summarized: chapter.summarized,
+      transcribed: chapter.transcribed,
       rendered: chapter.rendered,
       status: chapter.status,
       error: chapter.error,
@@ -386,10 +386,10 @@ async function emitRecentLogs(jobId: string, socket: Socket): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// DB -> JobSummary mapping
+// DB -> JobDetail mapping
 // ---------------------------------------------------------------------------
 
-async function loadJobSummary(jobId: string) {
+async function loadJobDetail(jobId: string) {
   const job = await db.job.findUnique({
     where: { id: jobId },
     include: { chapters: { orderBy: { index: 'asc' } } },
@@ -426,7 +426,7 @@ async function loadJobSummary(jobId: string) {
       language: c.language,
       pageCount: c.pageCount,
       translated: c.translated,
-      summarized: c.summarized,
+      transcribed: c.transcribed,
       rendered: c.rendered,
       status: c.status,
       error: c.error,
@@ -808,7 +808,7 @@ async function processJob(jobId: string): Promise<void> {
   // -----------------------------
   await db.job.update({
     where: { id: jobId },
-    data: { status: 'summarizing', stage: 'transcribe', message: 'Reading panel text with VLM' },
+    data: { status: 'transcribing', stage: 'transcribe', message: 'Reading panel text with VLM' },
   })
   await emitStatus(jobId)
   await emitLog(jobId, 'info', 'transcribe', 'Transcribing speech bubbles and captions from each panel image')
@@ -834,7 +834,7 @@ async function processJob(jobId: string): Promise<void> {
     orderBy: { index: 'asc' },
   })
 
-  let summarizedCount = 0
+  let transcribedCount = 0
   for (const ch of scrapedChapters) {
     if (cancelledJobs.has(jobId)) {
       await emitLog(jobId, 'warn', 'transcribe', 'Cancelled during transcription')
@@ -879,10 +879,10 @@ async function processJob(jobId: string): Promise<void> {
     if (imageFiles.length === 0) {
       const updated = await db.chapter.update({
         where: { id: ch.id },
-        data: { status: 'summarized', summarized: true },
+        data: { status: 'transcribed', transcribed: true },
       })
       await emitChapter(jobId, updated)
-      summarizedCount++
+      transcribedCount++
       continue
     }
 
@@ -892,10 +892,10 @@ async function processJob(jobId: string): Promise<void> {
       await emitLog(jobId, 'info', 'transcribe', `Chapter ${ch.index} transcriptions already cached — skipping`)
       const updated = await db.chapter.update({
         where: { id: ch.id },
-        data: { status: 'summarized', summarized: true },
+        data: { status: 'transcribed', transcribed: true },
       })
       await emitChapter(jobId, updated)
-      summarizedCount++
+      transcribedCount++
       continue
     }
 
@@ -920,13 +920,13 @@ async function processJob(jobId: string): Promise<void> {
       // frame filenames (frame_00000.jpg) which the Python render step
       // matches to individual frames for per-panel narration sync.
       await fs.writeFile(narrationFile, JSON.stringify(narrations, null, 2), 'utf8')
-      // No summary.txt needed — per-image narrations (narration.json) are sufficient.
+      // Per-image transcriptions (narration.json) are sufficient.
 
       const updated = await db.chapter.update({
         where: { id: ch.id },
-        data: { status: 'summarized', summarized: true },
+        data: { status: 'transcribed', transcribed: true },
       })
-      summarizedCount++
+      transcribedCount++
       await emitChapter(jobId, updated)
       await emitLog(
         jobId,
@@ -937,17 +937,17 @@ async function processJob(jobId: string): Promise<void> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       await emitLog(jobId, 'error', 'transcribe', `Chapter ${ch.index} transcription failed: ${msg}`)
-      // No summary.txt on error — narration.json absence signals failure to Python pipeline.
+      // narration.json absence signals failure to Python pipeline.
       const updated = await db.chapter.update({
         where: { id: ch.id },
-        data: { status: 'summarized', summarized: true },
+        data: { status: 'transcribed', transcribed: true },
       })
       await emitChapter(jobId, updated)
     }
 
     await emitProgress(jobId, {
-      progress: 30 + (summarizedCount / Math.max(1, scrapedChapters.length)) * 15,
-      doneChapters: summarizedCount,
+      progress: 30 + (transcribedCount / Math.max(1, scrapedChapters.length)) * 15,
+      doneChapters: transcribedCount,
       totalChapters: chapters.length,
       doneImages,
       totalImages,
@@ -958,13 +958,13 @@ async function processJob(jobId: string): Promise<void> {
 
   await db.job.update({
     where: { id: jobId },
-    data: { doneChapters: summarizedCount },
+    data: { doneChapters: transcribedCount },
   })
   await emitLog(
     jobId,
     'success',
     'transcribe',
-    `Transcription complete: ${summarizedCount}/${scrapedChapters.length} chapters`,
+    `Transcription complete: ${transcribedCount}/${scrapedChapters.length} chapters`,
   )
 
   if (cancelledJobs.has(jobId)) return
@@ -1064,7 +1064,7 @@ async function processJob(jobId: string): Promise<void> {
       }
       await emitProgress(jobId, {
         progress: pct,
-        doneChapters: summarizedCount,
+        doneChapters: transcribedCount,
         totalChapters: chapters.length,
         doneImages,
         totalImages,
@@ -1393,7 +1393,7 @@ httpServer.listen(PORT, async () => {
   // "pending" so the pipeline picks them up fresh.
   try {
     // First, reset stuck active jobs to "pending" so they get re-processed.
-    const STUCK_STATUSES = ['scraping', 'summarizing', 'translating', 'rendering', 'merging']
+    const STUCK_STATUSES = ['scraping', 'transcribing', 'translating', 'rendering', 'merging']
     const stuckJobs = await db.job.findMany({
       where: { status: { in: STUCK_STATUSES } },
       orderBy: { createdAt: 'asc' },
