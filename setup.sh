@@ -108,7 +108,7 @@ log_info "Package manager: $PKG_MGR (${OS})"
 # ═══════════════════════════════════════════════════════════════════════════════
 log_step "0a" "Checking disk space..."
 
-AVAILABLE_GB=$(df -BG "$PROJECT_DIR" | awk 'NR==2 {print $4}' | tr -d 'G')
+AVAILABLE_GB=$(LC_ALL=C df -BG "$PROJECT_DIR" | awk 'NR==2 {print $4}' | tr -d 'G')
 MIN_DISK_GB=12  # Ollama models (~7GB) + torch (~2GB) + bun deps + headroom
 
 if [[ -z "$AVAILABLE_GB" || "$AVAILABLE_GB" -lt "$MIN_DISK_GB" ]]; then
@@ -288,16 +288,25 @@ done
 # ═══════════════════════════════════════════════════════════════════════════════
 log_step 4 "Setting up Python venv + ML dependencies..."
 
-if [[ -d "$PYTHON_VENV" ]]; then
+if [[ -d "$PYTHON_VENV/bin/python3" ]]; then
     log_info "Python venv already exists at $PYTHON_VENV"
 else
     # FIX #12: Use virtualenv as fallback if python3 -m venv is unavailable
+    rm -rf "$PYTHON_VENV"  # remove incomplete venv if creation failed previously
     if [[ "${USE_VIRTUAL_ENV:-false}" == "true" ]] && command -v virtualenv &>/dev/null; then
-        virtualenv -p python3 "$PYTHON_VENV"
-        log_info "Created Python venv (via virtualenv) at $PYTHON_VENV"
+        if virtualenv -p python3 "$PYTHON_VENV" 2>&1; then
+            log_info "Created Python venv (via virtualenv) at $PYTHON_VENV"
+        else
+            log_error "virtualenv failed — cannot create Python venv"
+            exit 1
+        fi
     else
-        python3 -m venv "$PYTHON_VENV"
-        log_info "Created Python venv at $PYTHON_VENV"
+        if python3 -m venv "$PYTHON_VENV" 2>&1; then
+            log_info "Created Python venv at $PYTHON_VENV"
+        else
+            log_error "python3 -m venv failed — cannot create Python venv"
+            exit 1
+        fi
     fi
 fi
 
@@ -375,6 +384,9 @@ if [[ ! -f .env ]]; then
         cp .env.example .env
         sed -i.bak "s|/path/to/your/project|$PROJECT_DIR|g" .env
         sed -i.bak "s|PYTHON_BIN=.*|PYTHON_BIN=$PYTHON_BIN|" .env
+        # FIX #2b: Also replace the DATABASE_URL with an absolute path
+        # (.env.example uses relative "file:../db/custom.db" which sed above won't match)
+        sed -i.bak "s|^DATABASE_URL=.*|DATABASE_URL=file:$PROJECT_DIR/db/custom.db|" .env
         rm -f .env.bak
         log_info "Created .env from .env.example"
     else
@@ -436,8 +448,16 @@ fi
 
 # FIX #4: Also generate Prisma client for pipeline-service
 log_info "Running Prisma generate for pipeline-service..."
-(cd mini-services/pipeline-service && bunx prisma generate 2>&1 | tail -3)
-if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+(
+    cd mini-services/pipeline-service || exit 1
+    # Pass DATABASE_URL from project root .env so env() in schema resolves
+    export DATABASE_URL="$(grep '^DATABASE_URL=' "$PROJECT_DIR/.env" 2>/dev/null | cut -d= -f2-)"
+    bunx prisma generate 2>&1 | tail -3
+    # Capture prisma's exit code before pipe (PIPESTATUS is subshell-local)
+    PRISMA_EXIT=${PIPESTATUS[0]}
+    exit $PRISMA_EXIT
+)
+if [[ $? -ne 0 ]]; then
     log_warn "Prisma generate failed for pipeline-service (non-critical — will retry on first run)"
 fi
 
@@ -469,20 +489,6 @@ else
             aarch64) CADDY_ARCH="arm64" ;;
             *) CADDY_ARCH="amd64" ;;
         esac
-        # Detect major version for repo URL
-        if [[ -f /etc/oracle-release ]]; then
-            # Oracle Linux 8/9
-            OS_VERSION=$(grep -oP '(?<=release )\d+' /etc/oracle-release 2>/dev/null | head -1)
-            OS_VERSION="${OS_VERSION:-9}"
-        elif [[ -f /etc/redhat-release ]]; then
-            OS_VERSION=$(grep -oP '(?<=release )\d+' /etc/redhat-release 2>/dev/null | head -1)
-            OS_VERSION="${OS_VERSION:-9}"
-        elif [[ -f /etc/amazon-linux-release ]]; then
-            OS_VERSION=$(grep -oP '(?<=release )\d+' /etc/amazon-linux-release 2>/dev/null | head -1)
-            OS_VERSION="${OS_VERSION:-2023}"
-        else
-            OS_VERSION="9"
-        fi
 
         # Try the Caddy official repo method first
         sudo dnf install -y 'dnf-command(copr)' 2>/dev/null || true
@@ -551,7 +557,6 @@ fi
 if command -v systemctl &>/dev/null; then
     # Resolve absolute paths at write-time (heredocs expand variables immediately)
     ABS_BUN="$BUN_PATH"
-    ABS_PYTHON="$PYTHON_BIN"
 
     # ── Next.js App Service ──
     # FIX #5: Use -H 0.0.0.0 so Next.js listens on all interfaces
@@ -643,7 +648,7 @@ if command -v iptables &>/dev/null; then
         EXTERNAL_PORT="$PORT_WEB"
     fi
 
-    for port in 22 443 "$EXTERNAL_PORT"; do
+    for port in 22 "$EXTERNAL_PORT"; do
         sudo iptables -C INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null || \
             sudo iptables -A INPUT -p tcp --dport "$port" -j ACCEPT
     done
@@ -665,7 +670,7 @@ if command -v iptables &>/dev/null; then
         fi
     fi
 
-    log_info "Firewall rules configured (ports 22, 443, $EXTERNAL_PORT)"
+    log_info "Firewall rules configured (ports 22, $EXTERNAL_PORT)"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -698,7 +703,7 @@ fi
 
 # Wait for services to come up
 echo -n "  Waiting for web server"
-for i in $(seq 1 30); do
+for i in $(seq 1 45); do
     if curl -sf "http://localhost:$PORT_WEB/" >/dev/null 2>&1; then
         echo " OK"
         break
@@ -747,15 +752,25 @@ echo -e "    Venv:                 ${CYAN}${PYTHON_VENV}${NC}"
 echo -e "    Binary:               ${CYAN}${PYTHON_BIN}${NC}"
 echo ""
 echo -e "  ${BOLD}Useful commands:${NC}"
-echo -e "    View web logs:        ${CYAN}journalctl -u manhwa-web -f${NC}"
-echo -e "    View pipeline logs:   ${CYAN}journalctl -u manhwa-pipeline -f${NC}"
-echo -e "    View Caddy logs:       ${CYAN}journalctl -u manhwa-caddy -f${NC}"
-echo -e "    Restart web:          ${CYAN}sudo systemctl restart manhwa-web${NC}"
-echo -e "    Restart pipeline:      ${CYAN}sudo systemctl restart manhwa-pipeline${NC}"
-echo -e "    Restart Caddy:        ${CYAN}sudo systemctl restart manhwa-caddy${NC}"
+if command -v systemctl &>/dev/null; then
+    echo -e "    View web logs:        ${CYAN}journalctl -u manhwa-web -f${NC}"
+    echo -e "    View pipeline logs:   ${CYAN}journalctl -u manhwa-pipeline -f${NC}"
+    if [[ "$CADDY_ENABLED" == "true" ]]; then
+        echo -e "    View Caddy logs:       ${CYAN}journalctl -u manhwa-caddy -f${NC}"
+        echo -e "    Restart Caddy:        ${CYAN}sudo systemctl restart manhwa-caddy${NC}"
+        echo -e "    Stop all:             ${CYAN}sudo systemctl stop manhwa-web manhwa-pipeline manhwa-caddy${NC}"
+    else
+        echo -e "    Stop all:             ${CYAN}sudo systemctl stop manhwa-web manhwa-pipeline${NC}"
+    fi
+    echo -e "    Restart web:          ${CYAN}sudo systemctl restart manhwa-web${NC}"
+    echo -e "    Restart pipeline:      ${CYAN}sudo systemctl restart manhwa-pipeline${NC}"
+else
+    echo -e "    View web logs:        ${CYAN}tmux attach -t manhwa-web${NC}"
+    echo -e "    View pipeline logs:   ${CYAN}tmux attach -t manhwa-pipeline${NC}"
+    echo -e "    Stop all:             ${CYAN}tmux kill-session -t manhwa-web; tmux kill-session -t manhwa-pipeline${NC}"
+fi
 echo -e "    Ollama status:         ${CYAN}ollama list${NC}"
 echo -e "    Pull another model:   ${CYAN}ollama pull llama3.1:8b${NC}"
-echo -e "    Stop all:             ${CYAN}sudo systemctl stop manhwa-web manhwa-pipeline manhwa-caddy${NC}"
 echo ""
 echo -e "  ${BOLD}Optional (add to .env for faster transcription):${NC}"
 echo -e "    GROQ_API_KEY=           ${YELLOW}(free — console.groq.com/keys)${NC}"

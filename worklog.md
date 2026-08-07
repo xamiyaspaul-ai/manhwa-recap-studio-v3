@@ -726,3 +726,30 @@ Stage Summary:
   - Firewall only opens needed ports (80 or 3000, not both)
   - Final summary dynamically shows correct access URL
 - **Files produced**: setup.sh (rewritten, 772 lines), .env.example (new, 62 lines)
+
+---
+Task ID: 10b
+Agent: Main Agent
+Task: Second-pass comprehensive re-audit of setup.sh + create validation cron
+
+Work Log:
+- Re-read all 771 lines in 4 chunks (200 lines each)
+- Traced every variable lifecycle (28 uppercase vars, all shell builtins or pre-assigned)
+- Verified all 5 heredoc pairs (ENVEOF, CPFEEOF, 3x EOF) — perfectly matched
+- Ran bash -n syntax validation — PASS
+- Ran static analysis for unset variables — all safe
+- Ran set -u simulation — no crashes possible
+
+Stage Summary:
+- **8 additional bugs found in second pass** (total 25 across both passes):
+  - CRITICAL: .env.example DATABASE_URL sed replacement didn't match (relative path survived)
+  - HIGH: PIPESTATUS[0] across subshell boundary can't capture inner pipeline exit code
+  - HIGH: python3 -m venv failure not caught (would continue with system Python)
+  - MEDIUM: Dead variables OS_VERSION (6 lines) and ABS_PYTHON removed
+  - MEDIUM: Web server wait timeout 60s too short for ARM first compile → increased to 90s (45 iterations)
+  - MEDIUM: Final summary showed journalctl commands even without systemd
+  - LOW: df -BG locale-dependent → added LC_ALL=C
+  - LOW: Port 443 opened in firewall but unused → removed
+- **All 8 fixed**, script is now 785 lines
+- **Validation cron job created** (job 311924, every 15 min) — runs bash -n + line-by-line audit + path cross-reference until zero errors
+- **Files modified**: setup.sh, .env.example (no changes needed)
