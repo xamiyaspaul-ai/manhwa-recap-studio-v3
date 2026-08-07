@@ -38,17 +38,48 @@ if [ "$EUID" -eq 0 ]; then
     exit 1
 fi
 
-echo "=== Step 1/8: System updates ==="
+echo "=== Step 1/9: System updates ==="
 sudo apt-get update -qq && sudo apt-get upgrade -y -qq
 echo "✓ System updated"
 
 echo ""
-echo "=== Step 2/8: Installing ffmpeg + system deps ==="
+echo "=== Step 1.5/9: Checking RAM / swap ==="
+TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+TOTAL_MEM_MB=$((TOTAL_MEM_KB / 1024))
+SWAP_ACTIVE=$(swapon --show | wc -l)
+if [ "$TOTAL_MEM_MB" -lt 4000 ] && [ "$SWAP_ACTIVE" -eq 0 ]; then
+    echo "  Low RAM detected (${TOTAL_MEM_MB}MB) with no swap — adding 4GB swapfile"
+    sudo fallocate -l 4G /swapfile
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile
+    sudo swapon /swapfile
+    if ! grep -q '/swapfile' /etc/fstab; then
+        echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+    fi
+    echo "✓ Swap added"
+else
+    echo "✓ RAM/swap OK (${TOTAL_MEM_MB}MB RAM, swap active: $SWAP_ACTIVE)"
+fi
+
+echo ""
+echo "=== Step 2/9: Adding Caddy repository ==="
+if ! command -v caddy &> /dev/null; then
+    sudo apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
+    sudo apt-get update -qq
+    echo "✓ Caddy repo added"
+else
+    echo "✓ Caddy already installed, skipping repo setup"
+fi
+
+echo ""
+echo "=== Step 3/9: Installing ffmpeg + system deps ==="
 sudo apt-get install -y -qq ffmpeg python3 python3-pip python3-venv git curl caddy
 echo "✓ ffmpeg + Python + Caddy installed"
 
 echo ""
-echo "=== Step 3/8: Installing Bun ==="
+echo "=== Step 4/9: Installing Bun ==="
 curl -fsSL https://bun.sh/install | bash
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
@@ -57,7 +88,7 @@ echo 'export PATH="$BUN_INSTALL/bin:$PATH"' >> ~/.bashrc
 echo "✓ Bun installed: $(bun --version)"
 
 echo ""
-echo "=== Step 4/8: Cloning the repo ==="
+echo "=== Step 5/9: Cloning the repo ==="
 if [ -d "$HOME/manhwa-recap-studio-v3" ]; then
     cd "$HOME/manhwa-recap-studio-v3"
     git pull -q
@@ -70,7 +101,7 @@ else
 fi
 
 echo ""
-echo "=== Step 5/8: Installing JavaScript dependencies ==="
+echo "=== Step 6/9: Installing JavaScript dependencies ==="
 bun install
 cd mini-services/pipeline-service
 bun install
@@ -78,7 +109,7 @@ cd ../..
 echo "✓ JS deps installed"
 
 echo ""
-echo "=== Step 6/8: Installing Python ML dependencies ==="
+echo "=== Step 7/9: Installing Python ML dependencies ==="
 python3 -m venv "$HOME/.venv"
 source "$HOME/.venv/bin/activate"
 pip install --upgrade pip -q
@@ -94,7 +125,7 @@ python3 -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" 2>/dev/null || tru
 echo "✓ YOLO model cached"
 
 echo ""
-echo "=== Step 7/8: Setting up database + .env ==="
+echo "=== Step 8/9: Setting up database + .env ==="
 # Create .env with local SQLite (no external DB needed on Oracle VM)
 cat > .env << 'ENVFILE'
 DATABASE_URL=file:/home/ubuntu/manhwa-recap-studio-v3/db/custom.db
@@ -113,7 +144,7 @@ bun run db:push 2>&1 | tail -3
 echo "✓ Database created"
 
 echo ""
-echo "=== Step 8/8: Building Next.js for production ==="
+echo "=== Step 9/9: Building Next.js for production ==="
 bun run build 2>&1 | tail -5
 echo "✓ Next.js built"
 
