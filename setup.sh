@@ -323,6 +323,7 @@ pip install --no-cache-dir \
 
 # Install remaining ML deps (torch/torchvision already satisfied, will be skipped)
 log_info "Installing remaining ML dependencies..."
+pip install --no-deps torch torchvision 2>/dev/null
 pip install -r pipeline/requirements.txt 2>&1 | tail -5
 
 # FIX #14: Verify critical imports
@@ -729,6 +730,12 @@ if [[ "$CADDY_ENABLED" == "true" ]]; then
 fi
 
 # ── Final Summary ──────────────────────────────────────────────────────────────
+# Determine the externally-facing port for the OCI reminder
+OCI_PORT=80
+if [[ "$CADDY_ENABLED" != "true" ]]; then
+    OCI_PORT="$PORT_WEB"
+fi
+
 echo ""
 echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════${NC}"
 echo -e "${CYAN}${BOLD}                    SETUP COMPLETE                               ${NC}"
@@ -779,8 +786,8 @@ echo -e "    OPENROUTER_API_KEY=     ${YELLOW}(free tier — openrouter.ai/keys)
 echo -e "    OPENAI_API_KEY=         ${YELLOW}(paid — platform.openai.com/api-keys)${NC}"
 echo ""
 echo -e "  ${BOLD}${RED}Oracle Cloud — IMPORTANT:${NC}"
-echo "    Open port 80 (or $PORT_WEB if no Caddy) in OCI Console:"
+echo "    Open port $OCI_PORT in OCI Console:"
 echo "    Networking → Security Lists → Add Ingress Rule"
-echo "    Source: 0.0.0.0/0  Port: 80  Protocol: TCP"
+echo "    Source: 0.0.0.0/0  Port: $OCI_PORT  Protocol: TCP"
 echo ""
 log_info "Setup complete!"

@@ -68,3 +68,9 @@ data/cache/
 # Runtime artifacts
 .zscripts/dev.pid
 pipeline/__pycache__/
+
+# Python virtual environment (created by setup.sh)
+.venv/
+
+# Log directory (created by setup.sh tmux fallback)
+logs/

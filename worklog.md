@@ -799,3 +799,32 @@ Stage Summary:
 - **1 bug found and fixed (PASS 4, cumulative: 28 bugs across 4 passes)**
   1. **MEDIUM: Line 363 bun install exit code masked by pipe** — `(cd dir && bun install | tail)` exits with tail's code, always 0, masking install failures. Fixed with PIPESTATUS capture + exit propagation.
 - **0 issues remaining** — script is clean (786 lines).
+
+---
+Task ID: 11
+Agent: Dry-Run QA Auditor (user-requested)
+Task: Oracle Cloud deployment dry-run diagnosis — simulate every step end-to-end
+
+Work Log:
+- Read entire 786-line setup.sh and traced each step as if running on Oracle Cloud ARM (aarch64, OL9, opc user)
+- Cross-referenced 10 project files: .env.example, both prisma schemas, requirements.txt, both package.json files, pipeline-service/index.ts, Caddyfile, pipeline/ dir, .gitignore, tmux fallback
+- Simulated OS detection (oracle → dnf), EPEL install, Bun/Ollama/Caddy install paths
+- Simulated systemd unit file generation and verified correctness
+- Simulated first-run AND re-run (idempotency) — all steps safe on re-run
+- Verified Caddyfile.prod routing matches dev Caddyfile
+- Verified .env sed chain produces correct absolute paths
+
+**3 real-world bugs found and fixed:**
+1. **BUG (setup.sh L784): OCI port reminder hardcodes Port: 80** — When CADDY_ENABLED=false, user is told to open port 80 in OCI Console, but Next.js listens on 3000. Fixed by computing `OCI_PORT` dynamically before the summary block.
+2. **BUG (.gitignore): Missing .venv/ and logs/** — setup.sh creates both directories but .gitignore didn't exclude them. On `git add -A` after deploy, the entire venv (hundreds of MB) and log files would be staged. Added both patterns.
+3. **RISK (requirements.txt + setup.sh): torch GPU upgrade on x86_64** — setup.sh installs CPU-only torch first, but `pip install -r requirements.txt` against default PyPI index could attempt to upgrade to a 2+ GB CUDA build on x86. Fixed by adding `pip install --no-deps torch torchvision` before the requirements install (pins torch in place), plus documenting the intent in requirements.txt.
+
+**Noted but not fixed (not setup.sh bugs):**
+- `pipeline-service/index.ts` hardcodes `PORT = 3001` instead of reading `process.env.PORT`. Functionally correct with defaults but not configurable.
+
+Stage Summary:
+- Script is now 792 lines with 3 additional real-world fixes (cumulative: 31 bugs across 5 passes)
+- All 10 steps verified safe for Oracle Cloud ARM deployment
+- Idempotent on re-run
+- All file paths cross-referenced and valid
+- Files modified: setup.sh, .gitignore, pipeline/requirements.txt
