@@ -1373,7 +1373,7 @@ httpServer.listen(PORT, async () => {
     })
     if (checkResult.status !== 0) {
       console.log('[pipeline-service] Python deps missing — auto-installing from pipeline/requirements.txt')
-      const installResult = spawnSync(PYTHON_BIN, ['-m', 'pip', 'install', '-r', '/home/z/my-project/pipeline/requirements.txt'], {
+      const installResult = spawnSync(PYTHON_BIN, ['-m', 'pip', 'install', '-r', path.join(PROJECT_ROOT, 'pipeline', 'requirements.txt')], {
         encoding: 'utf8',
         timeout: 120000,
         env: { ...process.env, PYTHONUNBUFFERED: '1' },
