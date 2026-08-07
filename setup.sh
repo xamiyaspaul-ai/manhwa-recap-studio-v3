@@ -360,7 +360,10 @@ else
 fi
 
 log_info "Installing pipeline-service dependencies..."
-if (cd mini-services/pipeline-service && bun install 2>&1 | tail -3); then
+if (cd mini-services/pipeline-service || exit 1
+    bun install 2>&1 | tail -3
+    BUN_EXIT=${PIPESTATUS[0]}
+    exit $BUN_EXIT); then
     log_info "Pipeline-service dependencies installed"
 else
     log_error "bun install FAILED for pipeline-service — check network/disk space"
