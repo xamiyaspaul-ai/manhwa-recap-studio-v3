@@ -5,7 +5,7 @@
  *  - Prisma client (single instance)
  *  - Path helpers (hardcoded to the parent app's data dir)
  *  - MangaDex fetch helpers (chapter pages, image download)
- *  - VLM helper (z-ai-web-dev-sdk) for generating chapter summaries
+ *  - VLM helper (z-ai-web-dev-sdk) for transcribing panel text from images
  *  - Small utility helpers (sleep, ensureDir, fileExists, sanitize)
  */
 
@@ -856,83 +856,8 @@ async function getZai() {
   return await zaiPromise
 }
 
-/**
- * Generate an English narrative summary for a chapter by sampling up to 9
- * images (first 3, middle 3, last 3) and asking the VLM to describe them.
- *
- * Falls back to a minimal summary on any error so the pipeline never blocks.
- * NOTE: This is the OLD chapter-level summary. Prefer generateImageNarrations
- * for per-image narration that stays in sync with the video frames.
- */
-export async function generateChapterSummary(
-  imagePaths: string[],
-): Promise<string> {
-  if (imagePaths.length === 0) {
-    return 'The chapter continues the story.'
-  }
-
-  // Pick up to 9 sample images: first 3, middle 3, last 3.
-  const sample = pickSampleImages(imagePaths, 9)
-
-  try {
-    const zai = await getZai()
-
-    // Build content array: text prompt + each sample image as a base64 data URL.
-    const content: Array<
-      | { type: 'text'; text: string }
-      | { type: 'image_url'; image_url: { url: string } }
-    > = [
-      {
-        type: 'text',
-        text:
-          'You are summarizing a manhwa/manga chapter for a recap video. ' +
-          'Look at these panel images (ordered from the beginning, middle, and end of the chapter) ' +
-          'and write a detailed ENGLISH narrative summary of what happens: the events, ' +
-          'character actions, key dialogue, and emotional beats. ' +
-          'Write 3 to 6 sentences in third person, present tense, as if narrating a story. ' +
-          'Do not mention chapter numbers. Do not mention that you are looking at images. ' +
-          'Output only the summary text.',
-      },
-    ]
-
-    for (const p of sample) {
-      const buf = await fs.readFile(p)
-      const b64 = buf.toString('base64')
-      const mime = p.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg'
-      content.push({
-        type: 'image_url',
-        image_url: { url: `data:${mime};base64,${b64}` },
-      })
-    }
-
-    const zaiAny = zai as {
-      chat: {
-        completions: {
-          createVision: (opts: {
-            messages: Array<{ role: string; content: typeof content }>
-            thinking: { type: string }
-          }) => Promise<{
-            choices?: Array<{ message?: { content?: string } }>
-          }>
-        }
-      }
-    }
-
-    const resp = await zaiAny.chat.completions.createVision({
-      messages: [{ role: 'user', content }],
-      thinking: { type: 'disabled' },
-    })
-
-    const text = resp?.choices?.[0]?.message?.content?.trim()
-    if (text && text.length > 0) {
-      return text
-    }
-    return 'The chapter continues the story.'
-  } catch (err) {
-    console.error('[VLM] summary generation failed:', err)
-    return 'The chapter continues the story.'
-  }
-}
+// generateChapterSummary removed — per-image VLM transcription (generateImageNarrations)
+// replaces the old chapter-level summary approach. No summary.txt needed.
 
 /**
  * Generate per-image narrations: send each image to the VLM individually and
@@ -1398,7 +1323,7 @@ async function narrateImageBatchGemini(imgPaths: string[], batchStart: number): 
   }
 
   const apiKey = process.env.GEMINI_API_KEY!
-  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash'
+  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash-lite-001'
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
 
   // Read + base64-encode each image.
@@ -2095,24 +2020,3 @@ async function narrateSingleImage(imgPath: string): Promise<string> {
   throw lastErr
 }
 
-/**
- * Pick up to `maxCount` sample images from a sorted list: first N, middle N, last N.
- */
-function pickSampleImages(paths: string[], maxCount: number): string[] {
-  if (paths.length <= maxCount) return paths.slice()
-  const n = Math.floor(maxCount / 3)
-  const first = paths.slice(0, n)
-  const midStart = Math.floor(paths.length / 2) - Math.floor(n / 2)
-  const middle = paths.slice(midStart, midStart + n)
-  const last = paths.slice(paths.length - n)
-  // Dedupe in case of overlap on small arrays.
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const p of [...first, ...middle, ...last]) {
-    if (!seen.has(p)) {
-      seen.add(p)
-      out.push(p)
-    }
-  }
-  return out.slice(0, maxCount)
-}

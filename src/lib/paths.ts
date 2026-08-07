@@ -4,7 +4,7 @@ import path from "path";
 /**
  * Root data directory for all pipeline jobs.
  * Each job lives under DATA_DIR/jobs/{jobId}/
- *   - dataset/chapter_XXX/001.jpg ... summary.txt
+ *   - dataset/chapter_XXX/001.jpg ... narration.json
  *   - work/ (pipeline temp files)
  *   - output/master_recap.mp4
  *

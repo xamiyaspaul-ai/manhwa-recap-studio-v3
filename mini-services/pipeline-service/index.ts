@@ -39,7 +39,6 @@ import {
   fetchImagesForSource,
   downloadImageForSource,
   extFromFilename,
-  generateChapterSummary,
   generateImageNarrations,
   filterCreditPanels,
   sleep,
@@ -878,8 +877,6 @@ async function processJob(jobId: string): Promise<void> {
       }
     }
     if (imageFiles.length === 0) {
-      // Still write a minimal summary so the Python pipeline has something.
-      await fs.writeFile(path.join(cDir, 'summary.txt'), 'The chapter continues the story.', 'utf8')
       const updated = await db.chapter.update({
         where: { id: ch.id },
         data: { status: 'summarized', summarized: true },
@@ -923,9 +920,7 @@ async function processJob(jobId: string): Promise<void> {
       // frame filenames (frame_00000.jpg) which the Python render step
       // matches to individual frames for per-panel narration sync.
       await fs.writeFile(narrationFile, JSON.stringify(narrations, null, 2), 'utf8')
-      // Also save a chapter-level summary.txt for backward compat (concatenation of all narrations).
-      const chapterSummary = narrations.map((n) => n.text).join(' ')
-      await fs.writeFile(path.join(cDir, 'summary.txt'), chapterSummary, 'utf8')
+      // No summary.txt needed — per-image narrations (narration.json) are sufficient.
 
       const updated = await db.chapter.update({
         where: { id: ch.id },
@@ -937,13 +932,12 @@ async function processJob(jobId: string): Promise<void> {
         jobId,
         'success',
         'transcribe',
-        `Chapter ${ch.index} transcribed: ${narrations.length} ${frameKeyed ? 'panels' : 'images'}${creditsRemoved > 0 ? ` (${creditsRemoved} credits filtered)` : ''}, ${chapterSummary.length} total chars`,
+        `Chapter ${ch.index} transcribed: ${narrations.length} ${frameKeyed ? 'panels' : 'images'}${creditsRemoved > 0 ? ` (${creditsRemoved} credits filtered)` : ''}`
       )
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       await emitLog(jobId, 'error', 'transcribe', `Chapter ${ch.index} transcription failed: ${msg}`)
-      // Write a fallback summary so the pipeline can still proceed.
-      await fs.writeFile(path.join(cDir, 'summary.txt'), 'The chapter continues the story.', 'utf8')
+      // No summary.txt on error — narration.json absence signals failure to Python pipeline.
       const updated = await db.chapter.update({
         where: { id: ch.id },
         data: { status: 'summarized', summarized: true },
