@@ -828,3 +828,22 @@ Stage Summary:
 - Idempotent on re-run
 - All file paths cross-referenced and valid
 - Files modified: setup.sh, .gitignore, pipeline/requirements.txt
+
+---
+Task ID: 12
+Agent: Fullstack developer (user-requested)
+Task: Switch Dialog modals to lighter Drawer (vaul) + commit & push
+
+Work Log:
+- Replaced Radix Dialog (centered overlay, ~20KB) with vaul Drawer (slide-in panel, ~5KB)
+- job-detail-modal.tsx: Drawer slides from right, shows job progress, chapter table, error display
+- settings-dialog.tsx: Drawer slides from right, shows form with voices, languages, API keys, toggles
+- command.tsx (command palette): Left as Dialog — correct UX pattern for search overlay
+- All business logic, form handling, and content preserved — only swapped outer wrapper
+- Committed and pushed to GitHub
+
+Stage Summary:
+- Both modals now use vaul Drawer (4x lighter than Radix Dialog)
+- Better mobile UX with native swipe-to-dismiss gestures
+- Dev server compiles cleanly, all API routes returning 200
+- Commit: 31a8cb9 pushed to origin/main
