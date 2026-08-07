@@ -753,3 +753,24 @@ Stage Summary:
 - **All 8 fixed**, script is now 785 lines
 - **Validation cron job created** (job 311924, every 15 min) — runs bash -n + line-by-line audit + path cross-reference until zero errors
 - **Files modified**: setup.sh, .env.example (no changes needed)
+
+---
+Task ID: 10b
+Agent: QA Auditor (cron-triggered)
+Task: Second-pass audit of setup.sh — line-by-line with set -u, PIPESTATUS, path, and logic checks
+
+Work Log:
+- Ran bash -n: PASS (zero syntax errors)
+- Read all 786 lines line-by-line
+- Checked every variable under set -u for unset risk — all safe (use :- defaults or always-set)
+- Verified 5 heredoc pairs: ENVEOF, CPFEEOF, EOF x3 — all match exactly
+- Verified 2 PIPESTATUS[0] uses: line 444 (main shell, correct), line 457 (subshell-local, correctly propagated via exit)
+- Cross-referenced 7 file paths: package.json, pipeline/requirements.txt, mini-services/pipeline-service/{package.json,index.ts,prisma/schema.prisma}, prisma/schema.prisma, .env.example — all exist
+- Verified all cd commands have error handling (|| exit 1, || true, or && short-circuit)
+- Verified pipefail makes bun install exit code checks correct
+
+Stage Summary:
+- **2 bugs found and fixed:**
+  1. **CRITICAL: Line 291 `-d` should be `-x`** — checked if python3 binary is a directory (always false), causing rm -rf of entire venv on every run. Fixed to `-x` (executable check).
+  2. **LOW: `is_rhel` variable set 3 times but never read** — dead code. Removed all 3 assignments.
+- **0 issues remaining** — script is clean.

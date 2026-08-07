@@ -79,7 +79,6 @@ log_info "Detected OS: $OS"
 
 # ── Package manager detection ─────────────────────────────────────────────────
 is_deb=false
-is_rhel=false
 
 if command -v apt-get &>/dev/null; then
     PKG_MGR="apt"
@@ -88,12 +87,10 @@ if command -v apt-get &>/dev/null; then
     pkg_install() { sudo apt-get install -y -qq "$@" 2>&1 | tail -1 || log_warn "Some packages failed to install"; }
 elif command -v dnf &>/dev/null; then
     PKG_MGR="dnf"
-    is_rhel=true
     pkg_update()  { sudo dnf update -q 2>&1 | tail -1 || true; }
     pkg_install() { sudo dnf install -y -q "$@" 2>&1 | tail -1 || log_warn "Some packages failed to install"; }
 elif command -v yum &>/dev/null; then
     PKG_MGR="yum"
-    is_rhel=true
     pkg_update()  { sudo yum update -q 2>&1 | tail -1 || true; }
     pkg_install() { sudo yum install -y -q "$@" 2>&1 | tail -1 || log_warn "Some packages failed to install"; }
 else
@@ -288,7 +285,7 @@ done
 # ═══════════════════════════════════════════════════════════════════════════════
 log_step 4 "Setting up Python venv + ML dependencies..."
 
-if [[ -d "$PYTHON_VENV/bin/python3" ]]; then
+if [[ -x "$PYTHON_VENV/bin/python3" ]]; then
     log_info "Python venv already exists at $PYTHON_VENV"
 else
     # FIX #12: Use virtualenv as fallback if python3 -m venv is unavailable
