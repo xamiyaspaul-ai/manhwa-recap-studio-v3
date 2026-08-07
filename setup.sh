@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #
-# ╔══════════════════════════════════════════════════════════════════╗
-# ║  Manhwa Recap Studio v3 — One-Click Oracle Cloud Setup Script   ║
-# ║                                                                  ║
-# ║  Run after cloning:                                              ║
-# ║    git clone <repo-url> manhwa-recap-studio                      ║
-# ║    cd manhwa-recap-studio                                        ║
-# ║    chmod +x setup.sh && ./setup.sh                               ║
-# ║                                                                  ║
-# ║  Supports: Oracle Linux, Ubuntu, Debian, RHEL, Amazon Linux     ║
-# ╚══════════════════════════════════════════════════════════════════╝
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  Manhwa Recap Studio v3 — One-Click Oracle Cloud Setup Script       ║
+# ║                                                                      ║
+# ║  Run after cloning:                                                  ║
+# ║    git clone <repo-url> manhwa-recap-studio                          ║
+# ║    cd manhwa-recap-studio                                            ║
+# ║    chmod +x setup.sh && ./setup.sh                                   ║
+# ║                                                                      ║
+# ║  Supports: Oracle Linux, Ubuntu, Debian, RHEL, Amazon Linux         ║
+# ╚══════════════════════════════════════════════════════════════════════╝
 #
 set -uo pipefail
 # NOTE: We intentionally do NOT use `set -e` because some package
@@ -40,8 +40,8 @@ fi
 
 echo -e "${CYAN}${BOLD}"
 echo "  ╔═══════════════════════════════════════════════════╗"
-echo "  ║     Manhwa Recap Studio v3 — Setup Script        ║"
-echo "  ║     Oracle Cloud Auto-Configuration               ║"
+echo "  ║     Manhwa Recap Studio v3 — Setup Script          ║"
+echo "  ║     Oracle Cloud Auto-Configuration                 ║"
 echo "  ╚═══════════════════════════════════════════════════╝"
 echo -e "${NC}"
 
@@ -54,6 +54,8 @@ PORT_CADDY=80
 PROJECT_DIR="$(pwd)"
 PYTHON_VENV="$PROJECT_DIR/.venv"
 PYTHON_BIN="$PYTHON_VENV/bin/python3"
+# FIX #7: Initialize CADDY_ENABLED upfront so set -u never crashes
+CADDY_ENABLED=false
 
 # ── Detect OS ─────────────────────────────────────────────────────────────────
 detect_os() {
@@ -102,11 +104,33 @@ fi
 log_info "Package manager: $PKG_MGR (${OS})"
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# STEP 0: Swap File (Oracle Cloud ARM can get tight with Ollama models)
+# STEP 0a: Disk Space Check (FIX #8)
 # ═══════════════════════════════════════════════════════════════════════════════
-log_step 0 "Checking swap space..."
+log_step "0a" "Checking disk space..."
 
-CURRENT_SWAP_KB=$(grep SwapTotal /proc/meminfo | awk '{print $2}')
+AVAILABLE_GB=$(df -BG "$PROJECT_DIR" | awk 'NR==2 {print $4}' | tr -d 'G')
+MIN_DISK_GB=12  # Ollama models (~7GB) + torch (~2GB) + bun deps + headroom
+
+if [[ -z "$AVAILABLE_GB" || "$AVAILABLE_GB" -lt "$MIN_DISK_GB" ]]; then
+    log_warn "Low disk space: ${AVAILABLE_GB:-unknown}GB available (need ${MIN_DISK_GB}GB+)"
+    log_warn "Ollama model pulls and pip installs may fail. Consider adding a block volume."
+    echo -n "  Continue anyway? [y/N] "
+    read -r REPLY
+    if [[ "$REPLY" != "y" && "$REPLY" != "Y" ]]; then
+        log_error "Aborted due to insufficient disk space."
+        exit 1
+    fi
+else
+    log_info "Disk space OK: ${AVAILABLE_GB}GB available"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STEP 0b: Swap File (Oracle Cloud ARM can get tight with Ollama models)
+# ═══════════════════════════════════════════════════════════════════════════════
+log_step "0b" "Checking swap space..."
+
+CURRENT_SWAP_KB=$(grep SwapTotal /proc/meminfo 2>/dev/null | awk '{print $2}')
+CURRENT_SWAP_KB="${CURRENT_SWAP_KB:-0}"
 if [[ "$CURRENT_SWAP_KB" -lt 2097152 ]]; then
     # Less than 2GB swap — create a 4GB swap file
     SWAPFILE="/swapfile"
@@ -143,18 +167,31 @@ if $is_deb; then
         ca-certificates gnupg lsb-release jq sqlite3 tmux htop
 else
     # ── RHEL/Oracle Linux/Amazon Linux packages ──
-    # Enable EPEL for additional packages
-    sudo dnf install -y epel-release 2>/dev/null || \
+    # FIX #10: Oracle Linux uses oracle-epel-release, not epel-release
+    if [[ "$OS" == "oracle" ]]; then
+        sudo dnf install -y oracle-epel-release-el9 2>/dev/null || \
+            sudo dnf install -y oracle-epel-release-el8 2>/dev/null || \
+            log_warn "Could not install Oracle EPEL (non-critical — some packages may be missing)"
+    elif [[ "$OS" == "amazon" ]]; then
         sudo amazon-linux-extras install epel -y 2>/dev/null || true
+    else
+        sudo dnf install -y epel-release 2>/dev/null || true
+    fi
 
     pkg_install curl wget git unzip gcc gcc-c++ make \
         ffmpeg python3 python3-pip python3-devel \
         mesa-libGL glib2 libcap \
         ca-certificates gnupg2 redhat-lsb-core jq sqlite tmux htop
 
-    # python3-venv equivalent: ensure venv module is available
+    # FIX #12: Ensure python3 venv module is available on RHEL/Oracle
     if ! python3 -m venv --help &>/dev/null; then
+        # Try installing venv package first
         pkg_install python3-virtualenv 2>/dev/null || true
+        # If still not available, fall back to virtualenv command
+        if ! python3 -m venv --help &>/dev/null && command -v virtualenv &>/dev/null; then
+            log_warn "python3 -m venv unavailable — will use virtualenv instead"
+            USE_VIRTUAL_ENV=true
+        fi
     fi
 fi
 
@@ -169,6 +206,7 @@ BUN_PATH="$HOME/.bun/bin/bun"
 if [[ -x "$BUN_PATH" ]]; then
     log_info "Bun already installed: $($BUN_PATH --version)"
 else
+    log_info "Downloading Bun..."
     curl -fsSL https://bun.sh/install | bash
     export BUN_INSTALL="$HOME/.bun"
     export PATH="$BUN_INSTALL/bin:$PATH"
@@ -193,7 +231,7 @@ else
 fi
 
 # Start Ollama service if not running
-if ! pgrep -f 'ollama' &>/dev/null; then
+if ! pgrep -x ollama &>/dev/null; then
     if command -v systemctl &>/dev/null; then
         sudo systemctl start ollama 2>/dev/null || {
             ollama serve >/dev/null 2>&1 &
@@ -213,9 +251,16 @@ else
     log_info "Ollama service already running"
 fi
 
+# Helper: check if a specific Ollama model tag is already pulled
+# FIX #3: Use exact tag match instead of loose base-name grep
+ollama_has_model() {
+    local model="$1"
+    ollama list 2>/dev/null | awk '{print $1}' | grep -qxF "$model"
+}
+
 # Pull vision model (for panel text transcription)
 log_info "Pulling vision model: $OLLAMA_VISION_MODEL (this may take a few minutes on first run)..."
-if ollama list 2>/dev/null | grep -qF "${OLLAMA_VISION_MODEL%%:*}"; then
+if ollama_has_model "$OLLAMA_VISION_MODEL"; then
     log_info "Vision model '$OLLAMA_VISION_MODEL' already pulled"
 else
     ollama pull "$OLLAMA_VISION_MODEL" && \
@@ -225,7 +270,7 @@ fi
 
 # Pull text model (for narrative rewriting)
 log_info "Pulling text model: $OLLAMA_TEXT_MODEL..."
-if ollama list 2>/dev/null | grep -qF "${OLLAMA_TEXT_MODEL%%:*}"; then
+if ollama_has_model "$OLLAMA_TEXT_MODEL"; then
     log_info "Text model '$OLLAMA_TEXT_MODEL' already pulled"
 else
     ollama pull "$OLLAMA_TEXT_MODEL" && \
@@ -246,8 +291,14 @@ log_step 4 "Setting up Python venv + ML dependencies..."
 if [[ -d "$PYTHON_VENV" ]]; then
     log_info "Python venv already exists at $PYTHON_VENV"
 else
-    python3 -m venv "$PYTHON_VENV"
-    log_info "Created Python venv at $PYTHON_VENV"
+    # FIX #12: Use virtualenv as fallback if python3 -m venv is unavailable
+    if [[ "${USE_VIRTUAL_ENV:-false}" == "true" ]] && command -v virtualenv &>/dev/null; then
+        virtualenv -p python3 "$PYTHON_VENV"
+        log_info "Created Python venv (via virtualenv) at $PYTHON_VENV"
+    else
+        python3 -m venv "$PYTHON_VENV"
+        log_info "Created Python venv at $PYTHON_VENV"
+    fi
 fi
 
 # Activate venv for this shell session
@@ -255,11 +306,22 @@ source "$PYTHON_VENV/bin/activate"
 
 log_info "Installing Python dependencies from pipeline/requirements.txt..."
 pip install --upgrade pip setuptools wheel -q 2>&1 | tail -1
+
+# FIX #6: Use CPU-only torch on all platforms to avoid massive GPU builds.
+# This is critical on ARM Oracle Cloud where CUDA builds don't exist anyway.
+# We install torch CPU first, then the rest of requirements.
+log_info "Installing PyTorch (CPU-only build for compatibility)..."
+pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cpu \
+    torch torchvision 2>&1 | tail -3
+
+# Install remaining ML deps (torch/torchvision already satisfied, will be skipped)
+log_info "Installing remaining ML dependencies..."
 pip install -r pipeline/requirements.txt 2>&1 | tail -5
 
-# Verify critical imports
+# FIX #14: Verify critical imports
 log_info "Verifying Python environment..."
-python3 -c "
+if python3 -c "
 import edge_tts; print(f'  edge-tts: {edge_tts.__version__}')
 import openai; print(f'  openai: {openai.__version__}')
 import PIL; print(f'  Pillow: {PIL.__version__}')
@@ -268,7 +330,13 @@ import numpy; print(f'  numpy: {numpy.__version__}')
 import torch; print(f'  torch: {torch.__version__}')
 import ultralytics; print(f'  ultralytics: {ultralytics.__version__}')
 print('  All Python deps OK')
-" || log_warn "Some Python imports failed — check the output above"
+"; then
+    log_info "Python environment verified successfully"
+else
+    log_error "Python import verification FAILED — check the output above for missing packages"
+    log_error "You may need to run: source $PYTHON_VENV/bin/activate && pip install -r pipeline/requirements.txt"
+    exit 1
+fi
 
 log_info "Python venv: $PYTHON_BIN"
 
@@ -278,10 +346,20 @@ log_info "Python venv: $PYTHON_BIN"
 log_step 5 "Installing Node.js/Bun dependencies..."
 
 log_info "Installing main project dependencies..."
-bun install 2>&1 | tail -3
+if bun install 2>&1 | tail -3; then
+    log_info "Main project dependencies installed"
+else
+    log_error "bun install FAILED for main project — check network/disk space"
+    exit 1
+fi
 
 log_info "Installing pipeline-service dependencies..."
-(cd mini-services/pipeline-service && bun install 2>&1 | tail -3)
+if (cd mini-services/pipeline-service && bun install 2>&1 | tail -3); then
+    log_info "Pipeline-service dependencies installed"
+else
+    log_error "bun install FAILED for pipeline-service — check network/disk space"
+    exit 1
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # STEP 6: Database Setup (Prisma + SQLite) + .env
@@ -293,22 +371,31 @@ mkdir -p db
 # Create .env if not exists
 if [[ ! -f .env ]]; then
     if [[ -f .env.example ]]; then
+        # FIX #2: After copying .env.example, replace placeholders with actual paths
         cp .env.example .env
+        sed -i.bak "s|/path/to/your/project|$PROJECT_DIR|g" .env
+        sed -i.bak "s|PYTHON_BIN=.*|PYTHON_BIN=$PYTHON_BIN|" .env
+        rm -f .env.bak
         log_info "Created .env from .env.example"
     else
+        # Fallback: create minimal .env
+        # FIX #2: Use absolute path for DATABASE_URL to avoid any ambiguity
         cat > .env << ENVEOF
 # Manhwa Recap Studio v3 — Environment Configuration
-DATABASE_URL=file:./db/custom.db
+DATABASE_URL=file:$PROJECT_DIR/db/custom.db
 
 # Python (venv)
-PYTHON_BIN=${PYTHON_BIN}
-PROJECT_ROOT=${PROJECT_DIR}
-DATA_DIR=${PROJECT_DIR}/data
+PYTHON_BIN=$PYTHON_BIN
+PROJECT_ROOT=$PROJECT_DIR
+DATA_DIR=$PROJECT_DIR/data
 
 # Ollama (local LLMs — free, no API key needed)
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_VISION_MODEL=${OLLAMA_VISION_MODEL}
-OLLAMA_TEXT_MODEL=${OLLAMA_TEXT_MODEL}
+OLLAMA_VISION_MODEL=$OLLAMA_VISION_MODEL
+OLLAMA_TEXT_MODEL=$OLLAMA_TEXT_MODEL
+
+# Pipeline service port
+PORT=$PORT_PIPELINE
 
 # Optional: External VLM providers for faster transcription
 # GROQ_API_KEY=
@@ -323,23 +410,37 @@ else
 fi
 
 # Ensure critical paths are in .env (even if user already had a .env)
-for VAR_NAME in PYTHON_BIN PROJECT_ROOT DATA_DIR OLLAMA_BASE_URL OLLAMA_VISION_MODEL OLLAMA_TEXT_MODEL; do
+for VAR_NAME in PYTHON_BIN PROJECT_ROOT DATA_DIR OLLAMA_BASE_URL OLLAMA_VISION_MODEL OLLAMA_TEXT_MODEL PORT; do
     if ! grep -q "^${VAR_NAME}=" .env 2>/dev/null; then
         case $VAR_NAME in
-            PYTHON_BIN)      VAL="$PYTHON_BIN" ;;
-            PROJECT_ROOT)    VAL="$PROJECT_DIR" ;;
-            DATA_DIR)        VAL="$PROJECT_DIR/data" ;;
-            OLLAMA_BASE_URL) VAL="http://localhost:11434" ;;
+            PYTHON_BIN)         VAL="$PYTHON_BIN" ;;
+            PROJECT_ROOT)       VAL="$PROJECT_DIR" ;;
+            DATA_DIR)           VAL="$PROJECT_DIR/data" ;;
+            OLLAMA_BASE_URL)    VAL="http://localhost:11434" ;;
             OLLAMA_VISION_MODEL) VAL="$OLLAMA_VISION_MODEL" ;;
             OLLAMA_TEXT_MODEL)   VAL="$OLLAMA_TEXT_MODEL" ;;
+            PORT)               VAL="$PORT_PIPELINE" ;;
         esac
         echo "${VAR_NAME}=${VAL}" >> .env
         log_info "Added ${VAR_NAME} to .env"
     fi
 done
 
-# Push Prisma schema
-bunx prisma db push --accept-data-loss 2>&1 | tail -3
+# Push Prisma schema for main project
+log_info "Running Prisma db push (main project)..."
+bunx prisma db push --accept-data-loss 2>&1 | tail -5
+if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+    log_error "Prisma db push FAILED for main project"
+    exit 1
+fi
+
+# FIX #4: Also generate Prisma client for pipeline-service
+log_info "Running Prisma generate for pipeline-service..."
+(cd mini-services/pipeline-service && bunx prisma generate 2>&1 | tail -3)
+if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+    log_warn "Prisma generate failed for pipeline-service (non-critical — will retry on first run)"
+fi
+
 log_info "Database ready"
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -358,11 +459,43 @@ else
         curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | \
             sudo tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
         sudo apt-get update -qq 2>/dev/null
-        sudo apt-get install -y caddy 2>/dev/null || log_warn "Caddy install failed (non-critical)"
+        sudo apt-get install -y caddy 2>/dev/null || log_warn "Caddy apt install failed (non-critical)"
     else
+        # FIX #11: Use official Caddy RPM on RHEL/Oracle/Amazon Linux
+        # The COPR method is unreliable. Use direct RPM from Caddy GitHub releases.
+        ARCH=$(uname -m)
+        case "$ARCH" in
+            x86_64) CADDY_ARCH="amd64" ;;
+            aarch64) CADDY_ARCH="arm64" ;;
+            *) CADDY_ARCH="amd64" ;;
+        esac
+        # Detect major version for repo URL
+        if [[ -f /etc/oracle-release ]]; then
+            # Oracle Linux 8/9
+            OS_VERSION=$(grep -oP '(?<=release )\d+' /etc/oracle-release 2>/dev/null | head -1)
+            OS_VERSION="${OS_VERSION:-9}"
+        elif [[ -f /etc/redhat-release ]]; then
+            OS_VERSION=$(grep -oP '(?<=release )\d+' /etc/redhat-release 2>/dev/null | head -1)
+            OS_VERSION="${OS_VERSION:-9}"
+        elif [[ -f /etc/amazon-linux-release ]]; then
+            OS_VERSION=$(grep -oP '(?<=release )\d+' /etc/amazon-linux-release 2>/dev/null | head -1)
+            OS_VERSION="${OS_VERSION:-2023}"
+        else
+            OS_VERSION="9"
+        fi
+
+        # Try the Caddy official repo method first
         sudo dnf install -y 'dnf-command(copr)' 2>/dev/null || true
-        sudo dnf copr enable @caddy/caddy -y 2>/dev/null || true
-        sudo dnf install -y caddy 2>/dev/null || log_warn "Caddy install failed (non-critical)"
+        sudo dnf copr enable @caddy/caddy -y 2>/dev/null && \
+            sudo dnf install -y caddy 2>/dev/null || {
+            # FIX #11 fallback: Direct binary install if RPM method fails
+            log_warn "Caddy COPR/RPM install failed — falling back to direct binary"
+            curl -fsSL "https://github.com/caddyserver/caddy/releases/latest/download/caddy_linux_${CADDY_ARCH}.tar.gz" | \
+                sudo tar -xz -C /usr/local/bin caddy 2>/dev/null && \
+                sudo chmod +x /usr/local/bin/caddy && \
+                log_info "Caddy installed via direct binary" || \
+                log_warn "Caddy binary install also failed (non-critical — web traffic will use port 3000)"
+        }
     fi
 fi
 
@@ -371,21 +504,60 @@ if command -v caddy &>/dev/null; then
     CADDY_BIN=$(which caddy)
 else
     CADDY_BIN=""
-    log_warn "Caddy not installed — web traffic will use port 3000 directly"
+    log_warn "Caddy not installed — web traffic will use port $PORT_WEB directly"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# STEP 8: Systemd Services (auto-start on boot)
+# STEP 8: Production Caddyfile + Systemd Services (auto-start on boot)
 # ═══════════════════════════════════════════════════════════════════════════════
 log_step 8 "Installing systemd services..."
+
+# FIX #13: Create Caddyfile.prod BEFORE systemd service files (so it exists
+# when referenced), and also create it even without systemd
+
+# ── Create production Caddyfile (plain :80, no env var syntax) ──
+# FIX #5: Added WebSocket support headers for socket.io
+# FIX #15: Removed port 3000 from external access since Next.js binds to 0.0.0.0
+# but Caddy handles external traffic on port 80
+if [[ -n "$CADDY_BIN" && -x "$CADDY_BIN" ]]; then
+    CADDY_ENABLED=true
+    cat > Caddyfile.prod << 'CPFEEOF'
+# Manhwa Recap Studio v3 — Production Caddy Config
+# Change :80 to your domain (e.g. recap.example.com) for auto-HTTPS
+
+:80 {
+        @pipeline {
+                path /socket.io/*
+        }
+        handle @pipeline {
+                reverse_proxy localhost:3001
+        }
+
+        @internal_api {
+                path /internal/*
+        }
+        handle @internal_api {
+                reverse_proxy localhost:3001
+        }
+
+        handle {
+                reverse_proxy localhost:3000
+        }
+}
+CPFEEOF
+    log_info "Caddyfile.prod created"
+fi
 
 if command -v systemctl &>/dev/null; then
     # Resolve absolute paths at write-time (heredocs expand variables immediately)
     ABS_BUN="$BUN_PATH"
     ABS_PYTHON="$PYTHON_BIN"
-    ABS_CADDY="${CADDY_BIN:-$(which caddy 2>/dev/null)}"
 
     # ── Next.js App Service ──
+    # FIX #5: Use -H 0.0.0.0 so Next.js listens on all interfaces
+    # FIX #5b: Remove `tee dev.log` from systemd — it prevents crash detection
+    # because systemd tracks the `tee` process PID, not the `next` PID.
+    # Logs go to journal instead: journalctl -u manhwa-web -f
     sudo tee /etc/systemd/system/manhwa-web.service >/dev/null << EOF
 [Unit]
 Description=Manhwa Recap Studio - Next.js Web App
@@ -395,10 +567,12 @@ After=network.target
 Type=simple
 User=$USER
 WorkingDirectory=$PROJECT_DIR
-ExecStart=$ABS_BUN run dev
+ExecStart=$ABS_BUN --bun next dev -p $PORT_WEB -H 0.0.0.0
 Restart=always
 RestartSec=5
 EnvironmentFile=$PROJECT_DIR/.env
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
@@ -414,68 +588,41 @@ After=network.target
 Type=simple
 User=$USER
 WorkingDirectory=$PROJECT_DIR/mini-services/pipeline-service
-ExecStart=$ABS_BUN run dev
+ExecStart=$ABS_BUN --hot index.ts
 Restart=always
 RestartSec=5
 Environment=PORT=$PORT_PIPELINE
 EnvironmentFile=$PROJECT_DIR/.env
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
     # ── Caddy Service (only if Caddy was installed) ──
-    if [[ -n "$ABS_CADDY" && -x "$ABS_CADDY" ]]; then
+    if [[ -n "$CADDY_BIN" && -x "$CADDY_BIN" ]]; then
         sudo tee /etc/systemd/system/manhwa-caddy.service >/dev/null << EOF
 [Unit]
 Description=Manhwa Recap Studio - Caddy Reverse Proxy
-After=network.target manhwa-web.service
+After=network.target manhwa-web.service manhwa-pipeline.service
 
 [Service]
 Type=simple
 User=root
-ExecStart=$ABS_CADDY run --config $PROJECT_DIR/Caddyfile.prod
+ExecStart=$CADDY_BIN run --config $PROJECT_DIR/Caddyfile.prod
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 EOF
-        CADDY_ENABLED=true
-    else
-        CADDY_ENABLED=false
     fi
-
-    # Create production Caddyfile (plain :80, no env var syntax)
-    cat > Caddyfile.prod << 'CPFEEOF'
-# Manhwa Recap Studio v3 — Production Caddy Config
-# Change :80 to your domain (e.g. recap.example.com) for auto-HTTPS
-
-:80 {
-	@pipeline {
-		path /socket.io/*
-	}
-	handle @pipeline {
-		reverse_proxy localhost:3001
-	}
-
-	@internal_api {
-		path /internal/*
-	}
-	handle @internal_api {
-		reverse_proxy localhost:3001
-	}
-
-	handle {
-		reverse_proxy localhost:3000
-	}
-}
-CPFEOF
 
     # Reload systemd and enable services
     sudo systemctl daemon-reload
     sudo systemctl enable manhwa-web manhwa-pipeline 2>/dev/null
-    if $CADDY_ENABLED; then
+    if [[ -n "$CADDY_BIN" && -x "$CADDY_BIN" ]]; then
         sudo systemctl enable manhwa-caddy 2>/dev/null || log_warn "Could not enable Caddy service"
     fi
     log_info "Systemd services installed and enabled"
@@ -489,11 +636,36 @@ fi
 log_step 9 "Configuring firewall..."
 
 if command -v iptables &>/dev/null; then
-    for port in 22 80 443 3000; do
+    # FIX #15: Only open ports that are actually needed externally
+    # Port 80 (Caddy) or 3000 (Next.js direct, only if no Caddy)
+    EXTERNAL_PORT=80
+    if [[ "$CADDY_ENABLED" != "true" ]]; then
+        EXTERNAL_PORT="$PORT_WEB"
+    fi
+
+    for port in 22 443 "$EXTERNAL_PORT"; do
         sudo iptables -C INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null || \
             sudo iptables -A INPUT -p tcp --dport "$port" -j ACCEPT
     done
-    log_info "Firewall rules configured (ports 22, 80, 443, 3000)"
+
+    # FIX #9: Persist iptables rules across reboot
+    if command -v iptables-save &>/dev/null; then
+        if [[ -d /etc/iptables ]]; then
+            sudo sh -c 'iptables-save > /etc/iptables/rules.v4' 2>/dev/null && \
+                log_info "Firewall rules persisted to /etc/iptables/rules.v4" || \
+                log_warn "Could not persist iptables rules"
+        elif command -v netfilter-persistent &>/dev/null; then
+            sudo netfilter-persistent save 2>/dev/null && \
+                log_info "Firewall rules persisted via netfilter-persistent" || \
+                log_warn "Could not persist iptables rules"
+        else
+            # Manual persistence for RHEL/Oracle: add to rc.local or crontab
+            log_warn "No iptables persistence tool found — rules will be lost on reboot"
+            log_warn "Install iptables-services: sudo dnf install iptables-services"
+        fi
+    fi
+
+    log_info "Firewall rules configured (ports 22, 443, $EXTERNAL_PORT)"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -509,7 +681,7 @@ if command -v systemctl &>/dev/null; then
     sleep 3
     sudo systemctl start manhwa-pipeline
     sleep 2
-    if $CADDY_ENABLED; then
+    if [[ -n "$CADDY_BIN" && -x "$CADDY_BIN" ]]; then
         sudo systemctl start manhwa-caddy 2>/dev/null || true
     fi
     log_info "Services started via systemd"
@@ -517,10 +689,10 @@ else
     # Fallback: use tmux sessions
     tmux kill-session -t manhwa-web 2>/dev/null || true
     tmux kill-session -t manhwa-pipeline 2>/dev/null || true
-
-    tmux new-session -d -s manhwa-web   "cd $PROJECT_DIR && $BUN_PATH run dev 2>&1 | tee logs/web.log"
+    # FIX #5: Use -H 0.0.0.0 for direct access without Caddy
+    tmux new-session -d -s manhwa-web   "cd $PROJECT_DIR && $BUN_PATH --bun next dev -p $PORT_WEB -H 0.0.0.0 2>&1 | tee logs/web.log"
     sleep 3
-    tmux new-session -d -s manhwa-pipeline "cd $PROJECT_DIR/mini-services/pipeline-service && $BUN_PATH run dev 2>&1 | tee logs/pipeline.log"
+    tmux new-session -d -s manhwa-pipeline "cd $PROJECT_DIR/mini-services/pipeline-service && PORT=$PORT_PIPELINE $BUN_PATH --hot index.ts 2>&1 | tee logs/pipeline.log"
     log_info "Services started in tmux sessions (attach: tmux attach -t manhwa-web)"
 fi
 
@@ -542,15 +714,27 @@ else
     log_warn "Pipeline service not responding yet (may need a moment)"
 fi
 
+# Verify Caddy
+if [[ "$CADDY_ENABLED" == "true" ]]; then
+    if curl -sf "http://localhost:$PORT_CADDY/" >/dev/null 2>&1; then
+        log_info "Caddy reverse proxy healthy"
+    else
+        log_warn "Caddy not responding — check: sudo journalctl -u manhwa-caddy -f"
+    fi
+fi
+
 # ── Final Summary ──────────────────────────────────────────────────────────────
 echo ""
-echo -e "${CYAN}${BOLD}═════════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}${BOLD}                SETUP COMPLETE                            ${NC}"
-echo -e "${CYAN}${BOLD}═════════════════════════════════════════════════════${NC}"
+echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════${NC}"
+echo -e "${CYAN}${BOLD}                    SETUP COMPLETE                               ${NC}"
+echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════${NC}"
 echo ""
 echo -e "  ${BOLD}Services:${NC}"
-echo -e "    Web App:              ${GREEN}http://<your-ip>:80${NC} (via Caddy)"
-echo -e "    Direct access:        http://<your-ip>:$PORT_WEB"
+if [[ "$CADDY_ENABLED" == "true" ]]; then
+    echo -e "    Web App (via Caddy):  ${GREEN}http://<your-ip>:80${NC}"
+else
+    echo -e "    Web App (direct):     ${GREEN}http://<your-ip>:$PORT_WEB${NC}"
+fi
 echo -e "    Pipeline (internal):  localhost:$PORT_PIPELINE"
 echo -e "    Ollama API:           localhost:11434"
 echo ""
@@ -565,18 +749,22 @@ echo ""
 echo -e "  ${BOLD}Useful commands:${NC}"
 echo -e "    View web logs:        ${CYAN}journalctl -u manhwa-web -f${NC}"
 echo -e "    View pipeline logs:   ${CYAN}journalctl -u manhwa-pipeline -f${NC}"
-echo -e "    Restart web:         ${CYAN}sudo systemctl restart manhwa-web${NC}"
-echo -e "    Restart pipeline:     ${CYAN}sudo systemctl restart manhwa-pipeline${NC}"
-echo -e "    Ollama status:        ${CYAN}ollama list${NC}"
-echo -e "    Pull another model:  ${CYAN}ollama pull llama3.1:8b${NC}"
+echo -e "    View Caddy logs:       ${CYAN}journalctl -u manhwa-caddy -f${NC}"
+echo -e "    Restart web:          ${CYAN}sudo systemctl restart manhwa-web${NC}"
+echo -e "    Restart pipeline:      ${CYAN}sudo systemctl restart manhwa-pipeline${NC}"
+echo -e "    Restart Caddy:        ${CYAN}sudo systemctl restart manhwa-caddy${NC}"
+echo -e "    Ollama status:         ${CYAN}ollama list${NC}"
+echo -e "    Pull another model:   ${CYAN}ollama pull llama3.1:8b${NC}"
+echo -e "    Stop all:             ${CYAN}sudo systemctl stop manhwa-web manhwa-pipeline manhwa-caddy${NC}"
 echo ""
 echo -e "  ${BOLD}Optional (add to .env for faster transcription):${NC}"
 echo -e "    GROQ_API_KEY=           ${YELLOW}(free — console.groq.com/keys)${NC}"
 echo -e "    GEMINI_API_KEY=         ${YELLOW}(free — aistudio.google.com/apikey)${NC}"
 echo -e "    OPENROUTER_API_KEY=     ${YELLOW}(free tier — openrouter.ai/keys)${NC}"
+echo -e "    OPENAI_API_KEY=         ${YELLOW}(paid — platform.openai.com/api-keys)${NC}"
 echo ""
 echo -e "  ${BOLD}${RED}Oracle Cloud — IMPORTANT:${NC}"
-echo "    Open port 80 in OCI Console:"
+echo "    Open port 80 (or $PORT_WEB if no Caddy) in OCI Console:"
 echo "    Networking → Security Lists → Add Ingress Rule"
 echo "    Source: 0.0.0.0/0  Port: 80  Protocol: TCP"
 echo ""

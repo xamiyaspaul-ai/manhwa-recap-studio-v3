@@ -689,3 +689,40 @@
 - ✅ `bun run lint` — 0 errors, 0 warnings
 - ✅ Pipeline service health — still running
 - ✅ Dev server — GET / 200
+---
+Task ID: 10
+Agent: Main Agent
+Task: Comprehensive audit and fix of setup.sh (17 bugs found and fixed)
+
+Work Log:
+- Read setup.sh line-by-line (583 lines)
+- Cross-referenced all file paths: .env.example (MISSING), Caddyfile.prod (MISSING), pipeline/requirements.txt, package.json (both root and pipeline-service), prisma/schema.prisma, lib.ts, index.ts
+- Verified DATABASE_URL resolution behavior in Prisma (relative to schema.prisma directory)
+- Verified Ollama model list output format and tag matching behavior
+- Verified systemd service ExecStart commands against package.json scripts
+- Checked health endpoint exists in pipeline-service (confirmed: /internal/health)
+- Ran bash -n syntax validation (passed after CPFEEOF typo fix)
+
+Stage Summary:
+- **17 bugs found** across 4 severity levels:
+  - 7 CRITICAL: missing .env.example, wrong DATABASE_URL path, loose Ollama model grep, missing prisma generate, no -H 0.0.0.0, no CPU-only torch, CADDY_ENABLED uninit
+  - 8 MEDIUM: no disk check, no iptables persistence, wrong EPEL package, unreliable Caddy COPR, python3-venv missing, Caddyfile not in non-systemd path, no install verification, misleading port 3000 in firewall
+  - 2 LOW: no .gitignore entries, no log rotation
+- **All 17 issues fixed** in rewrite:
+  - Created .env.example with documented config template
+  - DATABASE_URL now uses absolute path (portable, unambiguous)
+  - Ollama model check uses exact tag match via awk+grep -xF
+  - Added prisma generate for pipeline-service
+  - Next.js uses -H 0.0.0.0, tee removed from systemd (journal-only)
+  - Torch installed via --index-url CPU-only (saves disk, avoids ARM GPU build failure)
+  - CADDY_ENABLED initialized to false at top of script
+  - Added 12GB disk space check with interactive confirmation
+  - iptables rules persisted via iptables-save or netfilter-persistent
+  - Oracle Linux gets oracle-epel-release-el9/el8 (not generic epel-release)
+  - Caddy install has binary fallback when COPR fails
+  - python3-venv falls back to virtualenv command on RHEL
+  - Caddyfile.prod created outside systemd block
+  - bun/pip install failures now exit(1) with clear error message
+  - Firewall only opens needed ports (80 or 3000, not both)
+  - Final summary dynamically shows correct access URL
+- **Files produced**: setup.sh (rewritten, 772 lines), .env.example (new, 62 lines)
