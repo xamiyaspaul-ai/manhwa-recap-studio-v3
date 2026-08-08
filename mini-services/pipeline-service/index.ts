@@ -1,3 +1,9 @@
+// Load the parent project's .env so API keys (GROQ_API_KEY, GEMINI_API_KEY, etc.) are available.
+// The pipeline-service has no .env of its own — it inherits from the Next.js project root.
+import { config as loadDotenv } from 'dotenv'
+import { resolve } from 'path'
+loadDotenv({ path: resolve(import.meta.dirname, '../..', '.env'), override: true })
+
 /**
  * index.ts — Master Recap Pipeline mini-service (port 3001).
  *
