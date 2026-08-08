@@ -189,11 +189,20 @@ async function httpHandler(req: IncomingMessage, res: ServerResponse) {
 }
 
 const httpServer = createServer((req, res) => {
-  // This listener only runs if socket.io's engine.io middleware doesn't
-  // intercept first. In practice, engine.io claims everything (path "/"),
-  // so this fallback is only hit if engine.io is bypassed. We keep it as a
-  // safety net.
-  void httpHandler(req, res)
+  // IMPORTANT: engine.io (socket.io) also registers a 'request' listener on
+  // this server. Both listeners fire for EVERY request. To avoid conflicts:
+  //   - For /internal/* and /preview/*: we handle it and call res.end().
+  //     Engine.io will also fire but will see the response is already finished
+  //     and silently skip (or get a "headers sent" error that it swallows).
+  //   - For all other requests: we do nothing. Engine.io handles them.
+  const reqUrl: string = req.url || '/'
+  const urlPath = reqUrl.split('?')[0]
+
+  if (urlPath.startsWith('/internal/') || urlPath.startsWith('/preview/')) {
+    void httpHandler(req, res)
+    return
+  }
+  // Do nothing for socket.io paths — engine.io handles them.
 })
 
 const io = new Server(httpServer, {
@@ -203,18 +212,23 @@ const io = new Server(httpServer, {
   pingInterval: 25000,
 })
 
-// Intercept /internal/* and /preview/* requests BEFORE engine.io processes
-// them, since `path: '/'` makes engine.io claim every URL.
-io.engine.use((req: any, res: any, next: any) => {
+// Patch engine.io's handleRequest to skip /internal/* and /preview/* paths.
+// This is the reliable way to prevent engine.io from intercepting our HTTP
+// endpoints, since io.engine.use() doesn't work for POST requests.
+const originalHandleRequest = io.engine.handleRequest.bind(io.engine)
+io.engine.handleRequest = function (req: any, res: any) {
   const reqUrl: string = req.url || '/'
   const urlPath = reqUrl.split('?')[0]
   if (urlPath.startsWith('/internal/') || urlPath.startsWith('/preview/')) {
+    // Let our createServer callback handle it — do nothing here.
+    // If the response is already finished (by our callback), skip.
+    if (res.writableEnded || res.headersSent) return
+    // If not yet handled, handle it now as fallback.
     void httpHandler(req, res)
-    // Do NOT call next() — we handled it.
     return
   }
-  next()
-})
+  return originalHandleRequest(req, res)
+}
 
 // ---------------------------------------------------------------------------
 // Socket.io connection handling
@@ -1478,3 +1492,11 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (err) => {
   console.error('[pipeline-service] unhandledRejection:', err)
 })
+process.on('exit', (code, signal) => {
+  console.error(`[pipeline-service] EXIT code=${code} signal=${signal} rss=${Math.round(process.memoryUsage.rss / 1024 / 1024)}MB`)
+})
+// Log memory usage every 30s to detect leaks.
+setInterval(() => {
+  const m = process.memoryUsage()
+  console.log(`[mem] rss=${Math.round(m.rss/1024/1024)}MB heap=${Math.round(m.heapUsed/1024/1024)}/${Math.round(m.heapTotal/1024/1024)}MB`)
+}, 30_000)

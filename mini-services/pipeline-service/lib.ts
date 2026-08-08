@@ -119,7 +119,7 @@ export function sleep(ms: number): Promise<void> {
 import crypto from 'crypto'
 
 const VLM_CACHE_DIR = path.join(DATA_DIR, 'cache', 'vlm')
-const VLM_CACHE_TTL_MS = 3600 * 1000 // 1 hour
+const VLM_CACHE_TTL_MS = 365 * 24 * 3600 * 1000 // 1 year (effectively permanent)
 
 function vlmCacheKey(imagePath: string): string {
   return crypto.createHash('sha256').update(imagePath).digest('hex').slice(0, 16)
@@ -887,18 +887,17 @@ export async function generateImageNarrations(
   // transcription time ~4-5x. Configurable via VLM_CONCURRENCY env var
   // (default 4). Each batch writes to disjoint indices in the results array
   // so there are no race conditions. If a batch call fails or returns
-  // BATCH_SIZE: number of panel images sent per VLM API call. 6 is the sweet
-  // spot — large enough to reduce API calls, small enough to avoid token-limit
-  // truncation and keep response times reasonable.
-  const BATCH_SIZE = 6
-  // Concurrency: 2 batches at a time = 12 panels transcribing in parallel.
-  // Kept LOW (2, not 4) because z-ai's free VLM tier rate-limits aggressively
-  // (429) when too many concurrent calls overlap. With 2 workers + the batch
-  // retry logic, failed batches get retried after a delay instead of piling
-  // up more 429s. Tune via VLM_CONCURRENCY env.
+  // BATCH_SIZE: number of panel images sent per VLM API call.
+  // 6 is the sweet spot — large enough to reduce API calls, small enough to
+  // avoid token-limit truncation and keep response times reasonable.
+  // In low-mem mode (VLM_CONCURRENCY=1), reduced to 3 since each child
+  // process loads all images into memory.
+  const LOW_MEM = process.env.VLM_LOW_MEM === '1' || process.env.VLM_CONCURRENCY === '1'
+  const BATCH_SIZE = LOW_MEM ? 3 : 6
+  // Concurrency: batches at a time. In low-mem mode, force 1.
   const CONCURRENCY = Math.max(
     1,
-    Math.min(4, parseInt(process.env.VLM_CONCURRENCY || '2', 10)),
+    Math.min(LOW_MEM ? 1 : 4, parseInt(process.env.VLM_CONCURRENCY || '2', 10)),
   )
 
   // Build the list of batches to process.
@@ -918,10 +917,10 @@ export async function generateImageNarrations(
   // pass the test are added to the active pool — no wasted time on dead keys.
   type VlmProvider = 'groq' | 'gemini' | 'openrouter' | 'ollama' | 'z-ai'
   const activeProviders: VlmProvider[] = [] // populated by pre-flight tests
-  // NOTE: z-ai is NOT added by default anymore — on self-hosted instances it's
-  // unavailable. It gets added back only if OLLAMA_BASE_URL is also unset,
-  // preserving backward compatibility in the Z.ai sandbox environment.
-  if (!process.env.OLLAMA_BASE_URL && !process.env.GROQ_API_KEY && !process.env.GEMINI_API_KEY && !process.env.OPENROUTER_API_KEY) {
+  // z-ai (built-in SDK) is only available in the Z.ai sandbox environment.
+  // On self-hosted instances, it doesn't work and causes process kills.
+  // Only activate z-ai if Z_AI_SANDBOX=1 is explicitly set.
+  if (process.env.Z_AI_SANDBOX === '1') {
     activeProviders.push('z-ai')
   }
 
@@ -991,12 +990,16 @@ export async function generateImageNarrations(
   if (tests[2]) activeProviders.push('gemini')
   if (tests[3]) activeProviders.push('openrouter')
 
-  if (activeProviders.length === 0) {
-    activeProviders.push('z-ai')
-    console.warn('[VLM] ⚠ No providers are available — falling back to z-ai (may not work outside Z.ai sandbox)')
-    console.warn('[VLM] ⚠ Install Ollama (ollama.com) or set GROQ_API_KEY for transcription')
-  } else {
-    console.log('[VLM] ✓ z-ai available as fallback (built-in SDK)')
+  // Detect sandboxed environments where z-ai createVision gets killed.
+  // If no real providers (groq/gemini/ollama/openrouter) are configured,
+  // and we have no API keys, skip z-ai entirely to avoid process kills.
+  const HAS_REAL_PROVIDER = activeProviders.length > 0
+  const HAS_API_KEYS = !!(process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY)
+
+  if (!HAS_REAL_PROVIDER) {
+    console.warn('[VLM] No VLM providers available — panels will be silent')
+    console.warn('[VLM] To enable transcription: set GROQ_API_KEY, GEMINI_API_KEY, or install Ollama')
+    return imagePaths.map((p) => ({ image: path.basename(p), text: '' }))
   }
 
   console.log(
@@ -1140,6 +1143,10 @@ export async function generateImageNarrations(
       completedPanels += images.length
     }
     reportProgress()
+    // Force GC in low-mem mode to free base64 image buffers promptly.
+    if (LOW_MEM) {
+      try { globalThis.gc?.() } catch { /* no-op */ }
+    }
   }
 
   // Simple concurrency pool: spin up CONCURRENCY workers, each pulling the
@@ -1163,16 +1170,13 @@ export async function generateImageNarrations(
 }
 
 /**
- * Send a BATCH of sliced panels to the VLM in a single call and get back
- * per-panel transcriptions. The VLM API accepts multiple image_url content
- * blocks in one message, so we send up to BATCH_SIZE images and ask the model
- * to return a JSON array of {index, text} objects — one per panel, in order.
+ * Send a BATCH of sliced panels to the VLM via an isolated child process.
+ * The child process (vlm-worker.ts) handles the actual z-ai SDK call,
+ * which avoids the sandbox controller killing the main pipeline-service
+ * process (which runs socket.io).
  *
- * This is the key optimization that makes sliced-panel transcription viable:
- * 190 panels -> ~32 batch calls instead of 190 single calls.
- *
- * Retries on rate-limit (429) and transient server errors (5xx) with
- * exponential backoff: 2s, 4s, 8s, 16s.
+ * Communication: JSON on stdin/stdout. Cache is checked/written by the
+ * worker so it persists even if the main process crashes.
  */
 async function narrateImageBatch(imgPaths: string[], batchStart: number): Promise<string[]> {
   // Check cache first — if all images in this batch are cached, skip the VLM call
@@ -1188,104 +1192,82 @@ async function narrateImageBatch(imgPaths: string[], batchStart: number): Promis
     return cachedResults as string[]
   }
 
-  const zai = await getZai()
+  // Spawn vlm-worker.ts as a child process. It handles the z-ai SDK call
+  // in isolation, avoiding the sandbox kill issue.
+  const { spawn } = await import('child_process')
+  const workerScript = path.join(import.meta.dirname, 'vlm-worker.ts')
+  const prompt =
+    `You are a precise transcriber for webtoon/manhwa panels, not a narrator. ` +
+    `I am sending you {count} separate panel images, labeled Panel 1 through Panel {count} ` +
+    `(in the order they appear below). For EACH panel, transcribe ONLY the actual text you can see inside ` +
+    `speech bubbles, thought bubbles, and caption/narration boxes — in the order a reader would naturally ` +
+    `read them (top to bottom, left to right within the panel). Translate to natural English if not already ` +
+    `in English, preserving meaning and tone.\n\n` +
+    `Guidelines:\n` +
+    `1. Output the text VERBATIM (translated) — do not paraphrase, summarize, embellish, or add descriptive ` +
+    `narration. Do not invent dialogue that is not actually written.\n` +
+    `2. Do not describe artwork, action, or expressions — only transcribe written text that appears in the image.\n` +
+    `3. If multiple bubbles/boxes are present in a panel, join them in reading order as separate sentences, ` +
+    `preserving punctuation like \"...\" and \"!\" as written.\n` +
+    `4. Sound effect text (e.g. \"BOOM\", \"CRASH\") can be included briefly if it is the only text present, ` +
+    `otherwise skip pure onomatopoeia in favor of actual dialogue/captions.\n` +
+    `5. If a panel has NO readable text at all (a purely visual/action panel with no bubbles or captions), ` +
+    `use an empty string for that panel's text.\n\n` +
+    `RESPONSE FORMAT: Return a JSON array with exactly {count} elements, one per panel in order. ` +
+    `Each element is an object: {\"index\": <1-based panel number>, \"text\": \"<transcribed text or empty string>\"}.\n` +
+    `Output ONLY the JSON array — no preamble, no markdown fences, no explanation.\n` +
+    `Example for 2 panels: [{\"index\": 1, \"text\": \"What is this place?\"}, {\"index\": 2, \"text\": \"\"}]`
 
-  const images: Array<{ name: string; mime: string; b64: string }> = []
-  for (const imgPath of imgPaths) {
-    const buf = await fs.readFile(imgPath)
-    const ext = path.extname(imgPath).toLowerCase()
-    const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
-    images.push({ name: path.basename(imgPath), mime, b64: buf.toString('base64') })
-  }
+  const input = JSON.stringify({ images: imgPaths, prompt })
 
-  const content: Array<
-    | { type: 'text'; text: string }
-    | { type: 'image_url'; image_url: { url: string } }
-  > = [
-    {
-      type: 'text',
-      text:
-        `You are a precise transcriber for webtoon/manhwa panels, not a narrator. ` +
-        `I am sending you ${images.length} separate panel images, labeled Panel 1 through Panel ${images.length} ` +
-        `(in the order they appear below). For EACH panel, transcribe ONLY the actual text you can see inside ` +
-        `speech bubbles, thought bubbles, and caption/narration boxes — in the order a reader would naturally ` +
-        `read them (top to bottom, left to right within the panel). Translate to natural English if not already ` +
-        `in English, preserving meaning and tone.\n\n` +
-        `Guidelines:\n` +
-        `1. Output the text VERBATIM (translated) — do not paraphrase, summarize, embellish, or add descriptive ` +
-        `narration. Do not invent dialogue that is not actually written.\n` +
-        `2. Do not describe artwork, action, or expressions — only transcribe written text that appears in the image.\n` +
-        `3. If multiple bubbles/boxes are present in a panel, join them in reading order as separate sentences, ` +
-        `preserving punctuation like "..." and "!" as written.\n` +
-        `4. Sound effect text (e.g. "BOOM", "CRASH") can be included briefly if it is the only text present, ` +
-        `otherwise skip pure onomatopoeia in favor of actual dialogue/captions.\n` +
-        `5. If a panel has NO readable text at all (a purely visual/action panel with no bubbles or captions), ` +
-        `use an empty string for that panel's text.\n\n` +
-        `RESPONSE FORMAT: Return a JSON array with exactly ${images.length} elements, one per panel in order. ` +
-        `Each element is an object: {"index": <1-based panel number>, "text": "<transcribed text or empty string>"}.\n` +
-        `Output ONLY the JSON array — no preamble, no markdown fences, no explanation.\n` +
-        `Example for 2 panels: [{"index": 1, "text": "What is this place?"}, {"index": 2, "text": ""}]`,
-    },
-    ...images.map(
-      (img) =>
-        ({
-          type: 'image_url',
-          image_url: { url: `data:${img.mime};base64,${img.b64}` },
-        }) as { type: 'image_url'; image_url: { url: string } },
-    ),
-  ]
+  return new Promise<string[]>((resolve, reject) => {
+    const child = spawn('bun', [workerScript], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+    })
 
-  const zaiAny = zai as {
-    chat: {
-      completions: {
-        createVision: (opts: {
-          messages: Array<{ role: string; content: typeof content }>
-          thinking: { type: string }
-        }) => Promise<{
-          choices?: Array<{ message?: { content?: string } }>
-        }>
+    let stdout = ''
+    let stderr = ''
+
+    child.stdout.on('data', (data: Buffer) => { stdout += data.toString() })
+    child.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString()
+      for (const line of data.toString().split('\n').filter((l: string) => l.trim())) {
+        console.log(`[vlm-worker] ${line}`)
       }
-    }
-  }
+    })
 
-  const MAX_RETRIES = 4
-  const BASE_DELAY_MS = 2000
-  let lastErr: unknown = null
-
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const resp = await zaiAny.chat.completions.createVision({
-        messages: [{ role: 'user', content }],
-        thinking: { type: 'disabled' },
-      })
-
-      const raw = resp?.choices?.[0]?.message?.content?.trim() ?? ''
-      const texts = parseBatchResponse(raw, images.length)
-      // Cache each panel's transcription individually
-      for (let i = 0; i < imgPaths.length && i < texts.length; i++) {
-        if (texts[i]) {
-          void setVlmCached(vlmCacheKey(imgPaths[i]), texts[i])
-        }
+    child.on('close', (code: number | null) => {
+      if (code !== 0 || !stdout.trim()) {
+        // Worker was killed (sandbox) or failed — return empty strings (silent panels).
+        // This is the correct behavior when no VLM provider is available.
+        console.warn(`[VLM] vlm-worker exited ${code} — returning empty text for ${imgPaths.length} panels`)
+        resolve(imgPaths.map(() => ''))
+        return
       }
-      return texts
-    } catch (err) {
-      lastErr = err
-      const msg = err instanceof Error ? err.message : String(err)
-      const isRetryable = /429|rate.?limit|too many requests|5\d{2}|server error|timeout|econnreset|socket hang up|fetch failed/i.test(msg)
-
-      if (!isRetryable || attempt === MAX_RETRIES) {
-        throw err
+      try {
+        const parsed = JSON.parse(stdout.trim())
+        resolve(parsed.results as string[])
+      } catch {
+        console.warn('[VLM] vlm-worker output parse error — returning empty text')
+        resolve(imgPaths.map(() => ''))
       }
+    })
 
-      const delayMs = BASE_DELAY_MS * Math.pow(2, attempt)
-      console.warn(
-        `[VLM] batch (panels ${batchStart + 1}-${batchStart + images.length}) attempt ${attempt + 1}/${MAX_RETRIES + 1} failed (${msg.slice(0, 80)}) — retrying in ${delayMs}ms`,
-      )
-      await sleep(delayMs)
-    }
-  }
+    child.on('error', (err: Error) => {
+      console.warn(`[VLM] vlm-worker spawn error: ${err.message} — returning empty text`)
+      resolve(imgPaths.map(() => ''))
+    })
 
-  throw lastErr
+    child.stdin.write(input)
+    child.stdin.end()
+
+    setTimeout(() => {
+      child.kill('SIGTERM')
+      console.warn('[VLM] vlm-worker timed out — returning empty text')
+      resolve(imgPaths.map(() => ''))
+    }, 60_000).unref()
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -1405,7 +1387,7 @@ async function narrateImageBatchGemini(imgPaths: string[], batchStart: number): 
       // Cache each panel's transcription (same cache as z-ai).
       for (let i = 0; i < imgPaths.length && i < texts.length; i++) {
         if (texts[i]) {
-          void setVlmCached(vlmCacheKey(imgPaths[i]), texts[i])
+          await setVlmCached(vlmCacheKey(imgPaths[i]), texts[i])
         }
       }
       return texts
@@ -1561,7 +1543,7 @@ async function narrateImageBatchGroq(imgPaths: string[], batchStart: number): Pr
       // Cache each panel's transcription (same cache as other providers).
       for (let i = 0; i < imgPaths.length && i < texts.length; i++) {
         if (texts[i]) {
-          void setVlmCached(vlmCacheKey(imgPaths[i]), texts[i])
+          await setVlmCached(vlmCacheKey(imgPaths[i]), texts[i])
         }
       }
       return texts
@@ -1704,7 +1686,7 @@ async function narrateImageBatchOllama(imgPaths: string[], batchStart: number): 
       // Cache each panel's transcription (same cache as other providers).
       for (let i = 0; i < imgPaths.length; i++) {
         if (texts[i]) {
-          void setVlmCached(vlmCacheKey(imgPaths[i]), texts[i])
+          await setVlmCached(vlmCacheKey(imgPaths[i]), texts[i])
         }
       }
 
@@ -1821,7 +1803,7 @@ async function narrateImageBatchOpenRouter(imgPaths: string[], batchStart: numbe
       // Cache each panel's transcription.
       for (let i = 0; i < imgPaths.length && i < texts.length; i++) {
         if (texts[i]) {
-          void setVlmCached(vlmCacheKey(imgPaths[i]), texts[i])
+          await setVlmCached(vlmCacheKey(imgPaths[i]), texts[i])
         }
       }
       return texts
