@@ -835,18 +835,30 @@ async function processJob(jobId: string): Promise<void> {
 
   // Set VLM API keys from the per-job record (user-entered in the UI).
   // Per-job keys ALWAYS override .env keys — the user explicitly chose these.
+  // If the job has no per-job key, fall back to the global settings table
+  // (saved via the Settings UI). This ensures jobs created before the user
+  // saved their API key in settings still work after the key is added.
   // We snapshot the originals so they can be restored after the job finishes.
   const _envBackup: Record<string, string | undefined> = {}
-  for (const [envKey, jobValue] of [
-    ['GROQ_API_KEY', job.groqKey],
-    ['GEMINI_API_KEY', job.geminiKey],
-    ['OPENROUTER_API_KEY', job.openRouterKey],
-    ['OPENAI_API_KEY', job.openaiKey],
-  ] as const) {
-    if (jobValue) {
+  const SETTING_ENV_MAP: Array<[string, string | null, string]> = [
+    ['GROQ_API_KEY', job.groqKey, 'groqKey'],
+    ['GEMINI_API_KEY', job.geminiKey, 'geminiKey'],
+    ['OPENROUTER_API_KEY', job.openRouterKey, 'openRouterKey'],
+    ['OPENAI_API_KEY', job.openaiKey, 'openaiKey'],
+  ]
+  // Batch-read settings that we need (only for keys missing from the job).
+  const missingSettings = SETTING_ENV_MAP.filter(([, jobVal]) => !jobVal).map(([, , settingId]) => settingId)
+  const settingRows = missingSettings.length > 0
+    ? await db.setting.findMany({ where: { id: { in: missingSettings } } })
+    : []
+  const settingsMap = new Map(settingRows.map((r) => [r.id, r.value]))
+  for (const [envKey, jobValue, settingId] of SETTING_ENV_MAP) {
+    const effectiveValue = jobValue || settingsMap.get(settingId) || ''
+    if (effectiveValue) {
       _envBackup[envKey] = process.env[envKey]
-      process.env[envKey] = jobValue
-      console.log(`[VLM] Using per-job ${envKey} for transcription`)
+      process.env[envKey] = effectiveValue
+      const source = jobValue ? 'per-job' : 'global settings'
+      console.log(`[VLM] Using ${source} ${envKey} for transcription`)
     }
   }
 
