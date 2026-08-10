@@ -158,7 +158,7 @@ pkg_update
 
 if $is_deb; then
     # ── Debian/Ubuntu packages ──
-    pkg_install curl wget git unzip build-essential \
+    pkg_install curl wget git unzip zstd build-essential \
         ffmpeg python3 python3-pip python3-venv python3-dev \
         libgl1 libglib2.0-0 libcap2-bin \
         ca-certificates gnupg lsb-release jq sqlite3 tmux htop
@@ -175,7 +175,7 @@ else
         sudo dnf install -y epel-release 2>/dev/null || true
     fi
 
-    pkg_install curl wget git unzip gcc gcc-c++ make \
+    pkg_install curl wget git unzip zstd gcc gcc-c++ make \
         ffmpeg python3 python3-pip python3-devel \
         mesa-libGL glib2 libcap \
         ca-certificates gnupg2 redhat-lsb-core jq sqlite tmux htop
