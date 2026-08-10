@@ -1007,6 +1007,20 @@ export async function generateImageNarrations(
     `[VLM] transcribing ${imagePaths.length} images in ${totalBatches} batches (${BATCH_SIZE}/batch) with concurrency ${CONCURRENCY} [${activeProviders.join(' + ')}]`,
   )
 
+  // ── Auto-reduce concurrency for single external provider ──
+  // Free-tier APIs (OpenRouter, Groq) rate-limit aggressively.
+  // With concurrency > 1, the first burst of parallel requests triggers 429s,
+  // causing early batches to silently fail while later ones succeed.
+  // Fix: when only 1 external (non-ollama) provider is active, serialize
+  // requests and add a small inter-batch delay.
+  const externalProviders = activeProviders.filter((p) => p !== 'ollama')
+  const EFFECTIVE_CONCURRENCY = (externalProviders.length <= 1 && !LOW_MEM) ? 1 : CONCURRENCY
+  const INTER_BATCH_DELAY_MS = (externalProviders.length === 1 && !LOW_MEM) ? 2000 : 0
+  if (EFFECTIVE_CONCURRENCY < CONCURRENCY) {
+    console.log(`[VLM] Single external provider detected — reducing concurrency ${CONCURRENCY} → ${EFFECTIVE_CONCURRENCY} (avoids rate limits)`)
+    if (INTER_BATCH_DELAY_MS > 0) console.log(`[VLM] Adding ${INTER_BATCH_DELAY_MS}ms delay between batches to avoid rate limiting`)
+  }
+
   // Atomic progress counter — shared across all concurrent workers.
   let completedPanels = 0
   const reportProgress = () => {
@@ -1087,12 +1101,16 @@ export async function generateImageNarrations(
       if (!succeeded) {
         // All providers failed for this batch. RETRY the whole batch with a
         // longer delay before giving up. Rate limits (429) are transient —
-        // waiting 10-30s usually lets the quota reset. Only use empty text
+        // waiting longer usually lets the quota reset. Only use empty text
         // (silence) as a last resort after all retries are exhausted.
         console.warn(
           `[VLM:${providerLabel}] batch ${num}/${totalBatches} failed on all providers — retrying with backoff`,
         )
-        const BATCH_RETRY_DELAYS = [10000, 20000, 30000] // 10s, 20s, 30s
+        // Use longer delays for rate-limited errors (inner retries already waited ~105s)
+        const isRateLimited = errMsg.includes('429') || errMsg.includes('rate')
+        const BATCH_RETRY_DELAYS = isRateLimited
+          ? [30000, 45000, 60000] // 30s, 45s, 60s for rate limits
+          : [10000, 20000, 30000] // 10s, 20s, 30s for other errors
         for (let retry = 0; retry < BATCH_RETRY_DELAYS.length && !succeeded; retry++) {
           await sleep(BATCH_RETRY_DELAYS[retry])
           console.warn(`[VLM] batch ${num}/${totalBatches} retry ${retry + 1}/${BATCH_RETRY_DELAYS.length} after ${BATCH_RETRY_DELAYS[retry] / 1000}s`)
@@ -1144,19 +1162,22 @@ export async function generateImageNarrations(
     }
   }
 
-  // Simple concurrency pool: spin up CONCURRENCY workers, each pulling the
+  // Simple concurrency pool: spin up EFFECTIVE_CONCURRENCY workers, each pulling the
   // next unprocessed batch from the queue. This naturally load-balances —
   // faster workers pick up more batches.
   let nextBatchIdx = 0
   async function worker(): Promise<void> {
     while (nextBatchIdx < batches.length) {
       const batchIdx = nextBatchIdx++
+      if (INTER_BATCH_DELAY_MS > 0 && batchIdx > 0) {
+        await sleep(INTER_BATCH_DELAY_MS)
+      }
       await processBatch(batches[batchIdx])
     }
   }
 
   const workers: Promise<void>[] = []
-  for (let i = 0; i < CONCURRENCY; i++) {
+  for (let i = 0; i < EFFECTIVE_CONCURRENCY; i++) {
     workers.push(worker())
   }
   await Promise.all(workers)
@@ -1806,10 +1827,16 @@ async function narrateImageBatchOpenRouter(imgPaths: string[], batchStart: numbe
     } catch (err) {
       lastErr = err
       const msg = err instanceof Error ? err.message : String(err)
-      // 429 = rate limited. Don't retry — fail fast.
-      if (msg.includes('429')) throw err
       // 403 = forbidden. Don't retry.
       if (msg.includes('403')) throw err
+      // 429 = rate limited — retry with longer backoff (free tier friendly).
+      if (msg.includes('429')) {
+        if (attempt === MAX_RETRIES) throw err
+        const delayMs = 15000 * Math.pow(2, attempt) // 15s, 30s, 60s
+        console.warn(`[VLM:openrouter] rate limited — retrying in ${delayMs / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES + 1})`)
+        await sleep(delayMs)
+        continue
+      }
       const isRetryable = /5\d{2}|server error|timeout|econnreset|socket hang up|fetch failed|aborted/i.test(msg)
       if (!isRetryable || attempt === MAX_RETRIES) throw err
       const delayMs = BASE_DELAY_MS * Math.pow(2, attempt)
