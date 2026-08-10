@@ -963,7 +963,8 @@ export async function generateImageNarrations(
         return false
       }
       if (provider === 'openrouter' && process.env.OPENROUTER_API_KEY) {
-        const res = await fetch('https://openrouter.ai/api/v1/models', {
+        // Use /auth/key endpoint — faster than /models (which can timeout).
+        const res = await fetch('https://openrouter.ai/api/v1/auth/key', {
           headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
           signal: AbortSignal.timeout(10000),
         })

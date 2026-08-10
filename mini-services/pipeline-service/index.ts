@@ -701,6 +701,19 @@ async function processJob(jobId: string): Promise<void> {
       await emitLog(jobId, 'warn', 'scrape', 'Cancelled during scrape')
       return
     }
+    // Skip chapters already scraped (resume support).
+    if (ch.status === 'scraped') {
+      const cDir = chapterDir(jobId, ch.index)
+      try {
+        const existing = (await fs.readdir(cDir)).filter(f => /\.(jpe?g|png|webp|gif)$/i.test(f)).length
+        if (existing > 0) {
+          doneImages += existing
+          totalImages = Math.max(totalImages, doneImages)
+          await emitLog(jobId, 'info', 'scrape', `Chapter ${ch.index} already scraped (${existing} images) — skipping`)
+          continue
+        }
+      } catch { /* dir missing, re-scrape */ }
+    }
     try {
       const cDir = chapterDir(jobId, ch.index)
       await ensureDir(cDir)
