@@ -1715,9 +1715,10 @@ async function narrateImageBatchOpenRouter(imgPaths: string[], batchStart: numbe
   }
 
   const apiKey = process.env.OPENROUTER_API_KEY!
-  // Default to free Qwen-VL model. Override via OPENROUTER_VLM_MODEL env var.
-  // Other free options: "meta-llama/llama-3.2-11b-vision-instruct:free"
-  const model = process.env.OPENROUTER_VLM_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct'
+  // Default to a vision-capable model accessible from all regions via OpenRouter.
+  // Override via OPENROUTER_VLM_MODEL env var.
+  // Other options: "google/gemini-2.5-flash" (geo-restricted in some regions)
+  const model = process.env.OPENROUTER_VLM_MODEL || 'qwen/qwen3.7-flash'
   const url = 'https://openrouter.ai/api/v1/chat/completions'
 
   // Read + base64-encode each image.
