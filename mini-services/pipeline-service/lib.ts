@@ -1026,9 +1026,10 @@ export async function generateImageNarrations(
     // Get providers that are still active (not disabled by circuit breaker)
     const available = activeProviders.filter((p) => !disabledProviders.has(p))
     if (available.length === 0) {
-      // All disabled — fall back to ollama (if available) or z-ai as last resort
+      // All disabled — fall back to ollama (if available)
       if (activeProviders.includes('ollama')) return 'ollama'
-      return 'z-ai'
+      // No fallback to z-ai — Groq/gemini/openrouter only
+      return available[0] // will be undefined, triggering empty-text fallback
     }
     // Even round-robin: each provider gets an equal share of batches.
     // This maximizes throughput — more working providers = faster transcription.
@@ -1077,20 +1078,9 @@ export async function generateImageNarrations(
         }
       }
 
-      // --- Cross-provider fallback ---
-      // If the primary provider failed on a non-content-filter error, retry
-      // the same batch on z-ai (the most reliable provider) before giving up.
-      if (providerLabel !== 'z-ai' && !isContentFilter) {
-        try {
-          console.warn(
-            `[VLM:${providerLabel}] batch ${num}/${totalBatches} failed (${errMsg.slice(0, 80)}) — falling back to z-ai`,
-          )
-          batchTexts = await narrateImageBatch(images, startIdx)
-          succeeded = true
-        } catch {
-          // z-ai also failed — fall through to error handling below
-        }
-      }
+      // --- No z-ai fallback ---
+      // z-ai SDK is disabled. Only Groq/gemini/openrouter/ollama are used.
+      // Failed batches will go through retry with backoff instead.
 
       if (!succeeded) {
         // All providers failed for this batch. RETRY the whole batch with a
@@ -1105,8 +1095,8 @@ export async function generateImageNarrations(
           await sleep(BATCH_RETRY_DELAYS[retry])
           console.warn(`[VLM] batch ${num}/${totalBatches} retry ${retry + 1}/${BATCH_RETRY_DELAYS.length} after ${BATCH_RETRY_DELAYS[retry] / 1000}s`)
           try {
-            // Try z-ai directly (most reliable) on retries
-            batchTexts = await narrateImageBatch(images, startIdx)
+            // Retry with Groq (no z-ai fallback)
+            batchTexts = await narrateImageBatchGroq(images, startIdx)
             succeeded = true
             console.log(`[VLM] batch ${num}/${totalBatches} succeeded on retry ${retry + 1}`)
           } catch (retryErr) {
