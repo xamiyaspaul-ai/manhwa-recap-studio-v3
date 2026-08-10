@@ -285,17 +285,45 @@ done
 # ═══════════════════════════════════════════════════════════════════════════════
 log_step 4 "Setting up Python venv + ML dependencies..."
 
-# Check Python version — openai>=2.49 requires Python 3.10+
-PY_MAJOR=$(python3 -c 'import sys; print(sys.version_info.major)')
-PY_MINOR=$(python3 -c 'import sys; print(sys.version_info.minor)')
+# ── Resolve which system Python to use (openai>=2.49 requires 3.10+) ──
+SYSTEM_PYTHON="${SYSTEM_PYTHON:-}"
+
+if [[ -n "$SYSTEM_PYTHON" && -x "$SYSTEM_PYTHON" ]]; then
+    # User explicitly set SYSTEM_PYTHON (e.g. miniconda python)
+    _py_bin="$SYSTEM_PYTHON"
+    log_info "Using custom Python: $_py_bin ($($_py_bin --version 2>&1))"
+else
+    # Auto-detect: try python3.12, python3.11, python3.10 before falling back to python3
+    _py_bin=""
+    for _candidate in python3.12 python3.11 python3.10; do
+        if command -v "$_candidate" &>/dev/null; then
+            _py_bin="$_candidate"
+            break
+        fi
+    done
+    _py_bin="${_py_bin:-python3}"
+fi
+
+# Verify version is >= 3.10
+PY_MAJOR=$($_py_bin -c 'import sys; print(sys.version_info.major)')
+PY_MINOR=$($_py_bin -c 'import sys; print(sys.version_info.minor)')
 if [[ "$PY_MAJOR" -lt 3 ]] || [[ "$PY_MAJOR" -eq 3 && "$PY_MINOR" -lt 10 ]]; then
-    log_error "Python $(python3 --version 2>&1 | awk '{print $2}') is too old — Python 3.10+ required (openai>=2.49 needs it)"
-    log_error "Install a newer Python first, e.g.:"
-    log_error "  Ubuntu/Debian: sudo add-apt-repository ppa:deadsnakes/ppa && sudo apt-get install python3.10-venv python3.10-dev"
-    log_error "  Then set PYTHON_BIN before running this script: PYTHON_BIN=python3.10 ./setup.sh"
+    log_error "Python $($_py_bin --version 2>&1 | awk '{print $2}') is too old — Python 3.10+ required (openai>=2.49 needs it)"
+    log_error ""
+    log_error "QUICKEST FIX — install Miniconda (works on any Ubuntu version, ARM or x86):"
+    log_error "  wget -qO- https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh | bash"
+    log_error "  source ~/miniconda3/bin/activate"
+    log_error "  conda create -y -n mrs python=3.10"
+    log_error "  conda activate mrs"
+    log_error "  Then re-run: SYSTEM_PYTHON=\$CONDA_PREFIX/bin/python ./setup.sh"
+    log_error ""
+    log_error "ALTERNATIVE — add deadsnakes PPA (may not work on Ubuntu 20.04 focal):"
+    log_error "  sudo add-apt-repository ppa:deadsnakes/ppa && sudo apt-get update"
+    log_error "  sudo apt-get install python3.10-venv python3.10-dev"
+    log_error "  Then re-run: SYSTEM_PYTHON=python3.10 ./setup.sh"
     exit 1
 fi
-log_info "Python $(python3 --version 2>&1 | awk '{print $2}') detected (>= 3.10 OK)"
+log_info "Python $($_py_bin --version 2>&1 | awk '{print $2}') detected (>= 3.10 OK)"
 
 if [[ -x "$PYTHON_VENV/bin/python3" ]]; then
     log_info "Python venv already exists at $PYTHON_VENV"
@@ -303,17 +331,18 @@ else
     # FIX #12: Use virtualenv as fallback if python3 -m venv is unavailable
     rm -rf "$PYTHON_VENV"  # remove incomplete venv if creation failed previously
     if [[ "${USE_VIRTUAL_ENV:-false}" == "true" ]] && command -v virtualenv &>/dev/null; then
-        if virtualenv -p python3 "$PYTHON_VENV" 2>&1; then
+        if virtualenv -p "$_py_bin" "$PYTHON_VENV" 2>&1; then
             log_info "Created Python venv (via virtualenv) at $PYTHON_VENV"
         else
             log_error "virtualenv failed — cannot create Python venv"
             exit 1
         fi
     else
-        if python3 -m venv "$PYTHON_VENV" 2>&1; then
+        if "$_py_bin" -m venv "$PYTHON_VENV" 2>&1; then
             log_info "Created Python venv at $PYTHON_VENV"
         else
-            log_error "python3 -m venv failed — cannot create Python venv"
+            log_error "$_py_bin -m venv failed — cannot create Python venv"
+            log_error "Try: SYSTEM_PYTHON=\$CONDA_PREFIX/bin/python ./setup.sh"
             exit 1
         fi
     fi
