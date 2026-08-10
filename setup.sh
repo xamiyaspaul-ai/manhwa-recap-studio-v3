@@ -46,7 +46,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-OLLAMA_VISION_MODEL="${OLLAMA_VISION_MODEL:-qwen2.5-vl:7b}"
+OLLAMA_VISION_MODEL="${OLLAMA_VISION_MODEL:-llava:7b}"
 OLLAMA_TEXT_MODEL="${OLLAMA_TEXT_MODEL:-llama3.2:3b}"
 PORT_WEB=3000
 PORT_PIPELINE=3001
@@ -284,6 +284,18 @@ done
 # STEP 4: Python Virtual Environment + ML Dependencies
 # ═══════════════════════════════════════════════════════════════════════════════
 log_step 4 "Setting up Python venv + ML dependencies..."
+
+# Check Python version — openai>=2.49 requires Python 3.10+
+PY_MAJOR=$(python3 -c 'import sys; print(sys.version_info.major)')
+PY_MINOR=$(python3 -c 'import sys; print(sys.version_info.minor)')
+if [[ "$PY_MAJOR" -lt 3 ]] || [[ "$PY_MAJOR" -eq 3 && "$PY_MINOR" -lt 10 ]]; then
+    log_error "Python $(python3 --version 2>&1 | awk '{print $2}') is too old — Python 3.10+ required (openai>=2.49 needs it)"
+    log_error "Install a newer Python first, e.g.:"
+    log_error "  Ubuntu/Debian: sudo add-apt-repository ppa:deadsnakes/ppa && sudo apt-get install python3.10-venv python3.10-dev"
+    log_error "  Then set PYTHON_BIN before running this script: PYTHON_BIN=python3.10 ./setup.sh"
+    exit 1
+fi
+log_info "Python $(python3 --version 2>&1 | awk '{print $2}') detected (>= 3.10 OK)"
 
 if [[ -x "$PYTHON_VENV/bin/python3" ]]; then
     log_info "Python venv already exists at $PYTHON_VENV"
