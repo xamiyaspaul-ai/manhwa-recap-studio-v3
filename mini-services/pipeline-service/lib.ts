@@ -1063,6 +1063,7 @@ export async function generateImageNarrations(
       succeeded = true
     } catch (primaryErr) {
       const errMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr)
+      console.warn(`[VLM:${providerLabel}] batch ${num}/${totalBatches} primary call failed: ${errMsg.slice(0, 200)}`)
       const isContentFilter = errMsg.includes('contentFilter') || errMsg.includes('400')
       const isRateLimit = errMsg.includes('429') || errMsg.includes('rate')
       const isForbidden = errMsg.includes('403') || errMsg.includes('Forbidden')
@@ -1096,8 +1097,11 @@ export async function generateImageNarrations(
           await sleep(BATCH_RETRY_DELAYS[retry])
           console.warn(`[VLM] batch ${num}/${totalBatches} retry ${retry + 1}/${BATCH_RETRY_DELAYS.length} after ${BATCH_RETRY_DELAYS[retry] / 1000}s`)
           try {
-            // Retry with Groq (no z-ai fallback)
-            batchTexts = await narrateImageBatchGroq(images, startIdx)
+            // Retry with the same provider (no z-ai fallback)
+            if (providerLabel === 'groq') batchTexts = await narrateImageBatchGroq(images, startIdx)
+            else if (providerLabel === 'gemini') batchTexts = await narrateImageBatchGemini(images, startIdx)
+            else if (providerLabel === 'openrouter') batchTexts = await narrateImageBatchOpenRouter(images, startIdx)
+            else if (providerLabel === 'ollama') batchTexts = await narrateImageBatchOllama(images, startIdx)
             succeeded = true
             console.log(`[VLM] batch ${num}/${totalBatches} succeeded on retry ${retry + 1}`)
           } catch (retryErr) {
@@ -1713,7 +1717,7 @@ async function narrateImageBatchOpenRouter(imgPaths: string[], batchStart: numbe
   const apiKey = process.env.OPENROUTER_API_KEY!
   // Default to free Qwen-VL model. Override via OPENROUTER_VLM_MODEL env var.
   // Other free options: "meta-llama/llama-3.2-11b-vision-instruct:free"
-  const model = process.env.OPENROUTER_VLM_MODEL || 'qwen/qwen-2-vl-7b-instruct:free'
+  const model = process.env.OPENROUTER_VLM_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct'
   const url = 'https://openrouter.ai/api/v1/chat/completions'
 
   // Read + base64-encode each image.

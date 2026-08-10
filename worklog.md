@@ -875,3 +875,28 @@ Stage Summary:
 - Groq llama-3.1-8b-instant is 8x lighter than 70b for translation/rewriting — dramatically faster and cheaper
 - Summary system fully removed. Pipeline now relies solely on per-image VLM transcription (narration.json)
 - All changes pushed: 74f1e59
+
+---
+Task ID: 1
+Agent: main
+Task: Fix Groq/OpenRouter API key not being used for VLM transcription
+
+Work Log:
+- Diagnosed root cause: Groq API returns HTTP 403 from HK sandbox (Alibaba Cloud IP 8.212.10.159, geo-restricted)
+- Gemini API also geo-restricted (FAILED_PRECONDITION: "User location is not supported")
+- OpenRouter is the ONLY VLM provider accessible from this sandbox
+- Fixed pipeline-service to fall back to DB settings table when job has no per-job API keys
+- Removed all z.ai SDK fallback paths (pickProvider, cross-provider fallback, retry logic) per user request
+- Fixed OpenRouter pre-flight test to use /api/v1/auth/key (fast) instead of /api/v1/models (10s+ timeout)
+- Fixed default OpenRouter VLM model from non-existent qwen/qwen-2-vl-7b-instruct:free to meta-llama/llama-4-scout-17b-16e-instruct
+- Fixed retry logic to use same provider instead of hardcoded Groq
+- Added primary error logging for VLM batch failures
+- Added skip-already-scraped-chapters resume support in scrape phase
+- Saved OpenRouter key sk-or-v1-... to job record and global settings
+- Verified transcription: 67/101 frames have text, 34 are empty (action-only panels)
+
+Stage Summary:
+- VLM transcription now works via OpenRouter with meta-llama/llama-4-scout-17b-16e-instruct
+- No z.ai SDK usage — only OpenRouter/Groq/Gemini/Ollama providers
+- Key code changes: index.ts (settings fallback, scrape resume), lib.ts (z.ai removal, OpenRouter fixes)
+- Test job cmsn8baag0000q40eai33u5eu successfully transcribed and rendering
