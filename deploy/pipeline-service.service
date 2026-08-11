@@ -9,8 +9,8 @@ WorkingDirectory=/home/ubuntu/manhwa-recap-studio-v3/mini-services/pipeline-serv
 ExecStart=/home/ubuntu/.bun/bin/bun index.ts
 Restart=on-failure
 RestartSec=5
-StandardOutput=append:/tmp/pipeline.log
-StandardError=append:/tmp/pipeline.log
+StandardOutput=journal
+StandardError=journal
 Environment=NODE_ENV=production
 
 [Install]
