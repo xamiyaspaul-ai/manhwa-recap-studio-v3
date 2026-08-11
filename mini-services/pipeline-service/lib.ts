@@ -1015,8 +1015,12 @@ export async function generateImageNarrations(
   // requests and add a small inter-batch delay to avoid rate limits.
   // Ollama is the only provider that can handle concurrency (it's local).
   const externalProviders = activeProviders.filter((p) => p !== 'ollama')
+  // Always serialize external API requests (concurrency=1) and add a longer
+  // delay between batches. Free-tier APIs rate-limit aggressively, and even
+  // 2s between batches isn't always enough — 4s gives the quota window time
+  // to reset. Ollama is the only provider that can handle concurrency (local).
   const EFFECTIVE_CONCURRENCY = (externalProviders.length >= 1 && !LOW_MEM) ? 1 : CONCURRENCY
-  const INTER_BATCH_DELAY_MS = (externalProviders.length >= 1 && !LOW_MEM) ? 2000 : 0
+  const INTER_BATCH_DELAY_MS = (externalProviders.length >= 1 && !LOW_MEM) ? 4000 : 0
   if (EFFECTIVE_CONCURRENCY < CONCURRENCY) {
     console.log(`[VLM] External provider(s) detected — reducing concurrency ${CONCURRENCY} → ${EFFECTIVE_CONCURRENCY} (avoids rate limits)`)
     if (INTER_BATCH_DELAY_MS > 0) console.log(`[VLM] Adding ${INTER_BATCH_DELAY_MS}ms delay between batches to avoid rate limiting`)
@@ -1116,13 +1120,22 @@ export async function generateImageNarrations(
           await sleep(BATCH_RETRY_DELAYS[retry])
           console.warn(`[VLM] batch ${num}/${totalBatches} retry ${retry + 1}/${BATCH_RETRY_DELAYS.length} after ${BATCH_RETRY_DELAYS[retry] / 1000}s`)
           try {
-            // Retry with the same provider (no z-ai fallback)
-            if (providerLabel === 'groq') batchTexts = await narrateImageBatchGroq(images, startIdx)
-            else if (providerLabel === 'gemini') batchTexts = await narrateImageBatchGemini(images, startIdx)
-            else if (providerLabel === 'openrouter') batchTexts = await narrateImageBatchOpenRouter(images, startIdx)
-            else if (providerLabel === 'ollama') batchTexts = await narrateImageBatchOllama(images, startIdx)
+            // Try a DIFFERENT provider for retries (cross-provider fallback).
+            // The primary provider already failed — retrying the same one
+            // just wastes time and quota. Temporarily exclude it from selection.
+            const prevDisabled = new Set(disabledProviders)
+            disabledProviders.add(providerLabel) // exclude the failed provider
+            const fallbackProvider = pickProvider()
+            disabledProviders.clear()
+            prevDisabled.forEach(p => disabledProviders.add(p)) // restore
+            console.log(`[VLM] batch ${num}/${totalBatches} retry ${retry + 1} — trying ${fallbackProvider} (was ${providerLabel})`)
+            if (fallbackProvider === 'groq') batchTexts = await narrateImageBatchGroq(images, startIdx)
+            else if (fallbackProvider === 'gemini') batchTexts = await narrateImageBatchGemini(images, startIdx)
+            else if (fallbackProvider === 'openrouter') batchTexts = await narrateImageBatchOpenRouter(images, startIdx)
+            else if (fallbackProvider === 'ollama') batchTexts = await narrateImageBatchOllama(images, startIdx)
+            else batchTexts = await narrateImageBatch(images, startIdx)
             succeeded = true
-            console.log(`[VLM] batch ${num}/${totalBatches} succeeded on retry ${retry + 1}`)
+            console.log(`[VLM] batch ${num}/${totalBatches} succeeded on retry ${retry + 1} via ${fallbackProvider}`)
           } catch (retryErr) {
             const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr)
             console.warn(`[VLM] batch ${num}/${totalBatches} retry ${retry + 1} failed: ${retryMsg.slice(0, 80)}`)
@@ -1739,10 +1752,12 @@ async function narrateImageBatchOpenRouter(imgPaths: string[], batchStart: numbe
   }
 
   const apiKey = process.env.OPENROUTER_API_KEY!
-  // Default to a vision-capable model accessible from all regions via OpenRouter.
+  // Default to a free, vision-capable model on OpenRouter.
+  // CRITICAL: must be a VISION model (supports image_url content).
+  // qwen3-* models are TEXT-ONLY — never use them for image transcription.
   // Override via OPENROUTER_VLM_MODEL env var.
-  // Other options: "google/gemini-2.5-flash" (geo-restricted in some regions)
-  const model = process.env.OPENROUTER_VLM_MODEL || 'qwen/qwen3.7-flash'
+  // Other options: "google/gemini-2.0-flash-exp:free", "qwen/qwen-2.5-vl-72b-instruct:free"
+  const model = process.env.OPENROUTER_VLM_MODEL || 'meta-llama/llama-4-scout:free'
   const url = 'https://openrouter.ai/api/v1/chat/completions'
 
   // Read + base64-encode each image.
