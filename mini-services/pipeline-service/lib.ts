@@ -1513,9 +1513,9 @@ async function narrateImageBatchGroq(imgPaths: string[], batchStart: number): Pr
   }
 
   const apiKey = process.env.GROQ_API_KEY!
-  // Llama 3.2 11B Vision — reliable, free vision model on Groq.
+  // Llama 4 Scout — Groq's vision model (check console.groq.com for current ID).
   // Override via GROQ_VLM_MODEL env var if needed.
-  const model = process.env.GROQ_VLM_MODEL || 'llama-3.2-11b-vision-preview'
+  const model = process.env.GROQ_VLM_MODEL || 'meta-llama/llama-4-scout'
   const url = 'https://api.groq.com/openai/v1/chat/completions'
 
   // Read + base64-encode each image.
@@ -1786,11 +1786,11 @@ async function narrateImageBatchOpenRouter(imgPaths: string[], batchStart: numbe
   }
 
   const apiKey = process.env.OPENROUTER_API_KEY!
-  // Gemini 2.0 Flash — free on OpenRouter, vision-capable.
+  // Nemotron Nano VL — confirmed free vision model on OpenRouter.
   // CRITICAL: must be a VISION model (supports image_url content).
   // Override via OPENROUTER_VLM_MODEL env var.
-  // Other free options: "qwen/qwen-2.5-vl-7b-instruct:free"
-  const model = process.env.OPENROUTER_VLM_MODEL || 'google/gemini-2.0-flash-exp:free'
+  // Other free options: "google/gemma-4-26b-a4b-it:free"
+  const model = process.env.OPENROUTER_VLM_MODEL || 'nvidia/nemotron-nano-12b-v2-vl:free'
   const url = 'https://openrouter.ai/api/v1/chat/completions'
 
   // Read + base64-encode each image.
