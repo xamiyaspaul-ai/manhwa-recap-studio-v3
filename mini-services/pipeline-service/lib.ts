@@ -1034,27 +1034,42 @@ export async function generateImageNarrations(
     }
   }
 
-  // Round-robin counter — distributes batches evenly across active providers.
-  let roundRobinCounter = 0
-
   // Circuit breakers: track errors per provider, disable after threshold.
   const disabledProviders = new Set<VlmProvider>()
   const providerErrorCounts: Record<string, number> = {}
-  const ERROR_THRESHOLD = 3
+  const ERROR_THRESHOLD = 5 // raised from 3 — free-tier APIs have bursty rate limits
 
-  function pickProvider(): VlmProvider {
-    // Get providers that are still active (not disabled by circuit breaker)
-    const available = activeProviders.filter((p) => !disabledProviders.has(p))
+  // --- Provider selection: PRIMARY + FALLBACK strategy ---
+  // For free-tier external APIs, round-robin is COUNTERPRODUCTIVE:
+  // it burns through ALL providers' rate limits simultaneously.
+  // Instead, use ONE provider at a time (the "primary"), and only switch
+  // to the next when the current one is circuit-broken.
+  // Ollama is always used alone (it's local, no rate limits).
+  let currentPrimary: VlmProvider | null = null
+
+  function pickProvider(exclude?: VlmProvider): VlmProvider {
+    const excluded = new Set(disabledProviders)
+    if (exclude) excluded.add(exclude)
+    const available = activeProviders.filter((p) => !excluded.has(p))
     if (available.length === 0) {
       // All disabled — fall back to ollama (if available)
-      if (activeProviders.includes('ollama')) return 'ollama'
-      // No fallback to z-ai — Groq/gemini/openrouter only
+      if (activeProviders.includes('ollama') && !disabledProviders.has('ollama')) return 'ollama'
       return available[0] // will be undefined, triggering empty-text fallback
     }
-    // Even round-robin: each provider gets an equal share of batches.
-    // This maximizes throughput — more working providers = faster transcription.
-    const idx = roundRobinCounter++ % available.length
-    return available[idx]
+    // If we have a working primary, keep using it (stickiness).
+    if (currentPrimary && !excluded.has(currentPrimary) && available.includes(currentPrimary)) {
+      return currentPrimary
+    }
+    // Pick the first available as the new primary (priority: groq > openrouter > gemini > ollama > z-ai)
+    const providerOrder: VlmProvider[] = ['groq', 'openrouter', 'gemini', 'ollama', 'z-ai']
+    for (const p of providerOrder) {
+      if (available.includes(p)) {
+        currentPrimary = p
+        console.log(`[VLM] switched primary provider to ${p}`)
+        return p
+      }
+    }
+    return available[0]
   }
 
   // Process a single batch — writes results into the shared array at the
@@ -1063,6 +1078,7 @@ export async function generateImageNarrations(
     const { images, startIdx, num } = batch
 
     const providerLabel = pickProvider()
+    console.log(`[VLM] batch ${num}/${totalBatches} → ${providerLabel} (${images.length} panels)`)
 
     let batchTexts: string[]
     let succeeded = false
@@ -1087,14 +1103,28 @@ export async function generateImageNarrations(
       const isRateLimit = errMsg.includes('429') || errMsg.includes('rate')
       const isForbidden = errMsg.includes('403') || errMsg.includes('Forbidden')
 
-      // --- Unified circuit breaker ---
+      // --- Circuit breaker ---
       // Track consecutive errors per provider. After N errors, disable it.
+      // Only trip on rate-limit (429) and forbidden (403) errors — transient
+      // server errors (5xx) shouldn't disable a provider permanently.
       if (isRateLimit || isForbidden) {
         providerErrorCounts[providerLabel] = (providerErrorCounts[providerLabel] || 0) + 1
         if (providerErrorCounts[providerLabel] >= ERROR_THRESHOLD && !disabledProviders.has(providerLabel)) {
           disabledProviders.add(providerLabel)
+          currentPrimary = null // force re-selection on next pickProvider()
           console.warn(
             `[VLM:${providerLabel}] circuit breaker tripped after ${providerErrorCounts[providerLabel]} errors — disabled for this transcription`,
+          )
+        }
+      } else {
+        // Non-rate-limit error (400, 5xx, etc.) — reset rate limit counter
+        // but still track. If the same provider gets 3 non-rate-limit errors,
+        // switch to a different provider (don't disable, just move on).
+        providerErrorCounts[providerLabel] = (providerErrorCounts[providerLabel] || 0) + 1
+        if (providerErrorCounts[providerLabel] >= 3) {
+          currentPrimary = null // force switch to another provider
+          console.warn(
+            `[VLM:${providerLabel}] ${providerErrorCounts[providerLabel]} non-rate-limit errors — switching primary provider`,
           )
         }
       }
@@ -1104,38 +1134,42 @@ export async function generateImageNarrations(
       // Failed batches will go through retry with backoff instead.
 
       if (!succeeded) {
-        // All providers failed for this batch. RETRY the whole batch with a
-        // longer delay before giving up. Rate limits (429) are transient —
-        // waiting longer usually lets the quota reset. Only use empty text
-        // (silence) as a last resort after all retries are exhausted.
-        console.warn(
-          `[VLM:${providerLabel}] batch ${num}/${totalBatches} failed on all providers — retrying with backoff`,
-        )
-        // Use longer delays for rate-limited errors (inner retries already waited ~105s)
         const isRateLimited = errMsg.includes('429') || errMsg.includes('rate')
+        console.warn(
+          `[VLM:${providerLabel}] batch ${num}/${totalBatches} failed — ${isRateLimited ? 'rate limited' : 'error'}: ${errMsg.slice(0, 120)}`,
+        )
+
+        // RETRY STRATEGY depends on error type:
+        // - Rate limit (429): retry SAME provider with long delays (transient).
+        //   Switching providers just burns through both quotas.
+        // - Permanent error (400, 403, 5xx): try a DIFFERENT provider immediately.
         const BATCH_RETRY_DELAYS = isRateLimited
           ? [30000, 45000, 60000] // 30s, 45s, 60s for rate limits
-          : [10000, 20000, 30000] // 10s, 20s, 30s for other errors
+          : [5000, 10000, 15000]  // 5s, 10s, 15s for other errors (faster switch)
+
         for (let retry = 0; retry < BATCH_RETRY_DELAYS.length && !succeeded; retry++) {
           await sleep(BATCH_RETRY_DELAYS[retry])
           console.warn(`[VLM] batch ${num}/${totalBatches} retry ${retry + 1}/${BATCH_RETRY_DELAYS.length} after ${BATCH_RETRY_DELAYS[retry] / 1000}s`)
           try {
-            // Try a DIFFERENT provider for retries (cross-provider fallback).
-            // The primary provider already failed — retrying the same one
-            // just wastes time and quota. Temporarily exclude it from selection.
-            const prevDisabled = new Set(disabledProviders)
-            disabledProviders.add(providerLabel) // exclude the failed provider
-            const fallbackProvider = pickProvider()
-            disabledProviders.clear()
-            prevDisabled.forEach(p => disabledProviders.add(p)) // restore
-            console.log(`[VLM] batch ${num}/${totalBatches} retry ${retry + 1} — trying ${fallbackProvider} (was ${providerLabel})`)
-            if (fallbackProvider === 'groq') batchTexts = await narrateImageBatchGroq(images, startIdx)
-            else if (fallbackProvider === 'gemini') batchTexts = await narrateImageBatchGemini(images, startIdx)
-            else if (fallbackProvider === 'openrouter') batchTexts = await narrateImageBatchOpenRouter(images, startIdx)
-            else if (fallbackProvider === 'ollama') batchTexts = await narrateImageBatchOllama(images, startIdx)
+            let retryProvider: VlmProvider
+            if (isRateLimited) {
+              // Rate limit = transient. Retry the SAME provider after waiting.
+              // The inner retry already waited 15s+30s+60s = 105s.
+              // These outer retries add 30s+45s+60s = 135s more total.
+              retryProvider = providerLabel
+              console.log(`[VLM] batch ${num}/${totalBatches} retry ${retry + 1} — same provider ${retryProvider} (rate limit, transient)`)
+            } else {
+              // Permanent error — switch to a DIFFERENT provider.
+              retryProvider = pickProvider(providerLabel)
+              console.log(`[VLM] batch ${num}/${totalBatches} retry ${retry + 1} — switching to ${retryProvider} (was ${providerLabel})`)
+            }
+            if (retryProvider === 'groq') batchTexts = await narrateImageBatchGroq(images, startIdx)
+            else if (retryProvider === 'gemini') batchTexts = await narrateImageBatchGemini(images, startIdx)
+            else if (retryProvider === 'openrouter') batchTexts = await narrateImageBatchOpenRouter(images, startIdx)
+            else if (retryProvider === 'ollama') batchTexts = await narrateImageBatchOllama(images, startIdx)
             else batchTexts = await narrateImageBatch(images, startIdx)
             succeeded = true
-            console.log(`[VLM] batch ${num}/${totalBatches} succeeded on retry ${retry + 1} via ${fallbackProvider}`)
+            console.log(`[VLM] batch ${num}/${totalBatches} succeeded on retry ${retry + 1} via ${retryProvider}`)
           } catch (retryErr) {
             const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr)
             console.warn(`[VLM] batch ${num}/${totalBatches} retry ${retry + 1} failed: ${retryMsg.slice(0, 80)}`)
