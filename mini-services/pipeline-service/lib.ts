@@ -1007,17 +1007,18 @@ export async function generateImageNarrations(
     `[VLM] transcribing ${imagePaths.length} images in ${totalBatches} batches (${BATCH_SIZE}/batch) with concurrency ${CONCURRENCY} [${activeProviders.join(' + ')}]`,
   )
 
-  // ── Auto-reduce concurrency for single external provider ──
-  // Free-tier APIs (OpenRouter, Groq) rate-limit aggressively.
+  // ── Auto-reduce concurrency for external API providers ──
+  // Free-tier APIs (OpenRouter, Groq, Gemini) rate-limit aggressively.
   // With concurrency > 1, the first burst of parallel requests triggers 429s,
   // causing early batches to silently fail while later ones succeed.
-  // Fix: when only 1 external (non-ollama) provider is active, serialize
-  // requests and add a small inter-batch delay.
+  // Fix: when ANY external (non-ollama) provider is active, serialize
+  // requests and add a small inter-batch delay to avoid rate limits.
+  // Ollama is the only provider that can handle concurrency (it's local).
   const externalProviders = activeProviders.filter((p) => p !== 'ollama')
-  const EFFECTIVE_CONCURRENCY = (externalProviders.length <= 1 && !LOW_MEM) ? 1 : CONCURRENCY
-  const INTER_BATCH_DELAY_MS = (externalProviders.length === 1 && !LOW_MEM) ? 2000 : 0
+  const EFFECTIVE_CONCURRENCY = (externalProviders.length >= 1 && !LOW_MEM) ? 1 : CONCURRENCY
+  const INTER_BATCH_DELAY_MS = (externalProviders.length >= 1 && !LOW_MEM) ? 2000 : 0
   if (EFFECTIVE_CONCURRENCY < CONCURRENCY) {
-    console.log(`[VLM] Single external provider detected — reducing concurrency ${CONCURRENCY} → ${EFFECTIVE_CONCURRENCY} (avoids rate limits)`)
+    console.log(`[VLM] External provider(s) detected — reducing concurrency ${CONCURRENCY} → ${EFFECTIVE_CONCURRENCY} (avoids rate limits)`)
     if (INTER_BATCH_DELAY_MS > 0) console.log(`[VLM] Adding ${INTER_BATCH_DELAY_MS}ms delay between batches to avoid rate limiting`)
   }
 
@@ -1410,12 +1411,13 @@ async function narrateImageBatchGemini(imgPaths: string[], batchStart: number): 
     } catch (err) {
       lastErr = err
       const msg = err instanceof Error ? err.message : String(err)
-      // 429 = rate limited. Don't retry — the rate limit won't reset in 2-16s,
-      // and the circuit breaker + z-ai fallback handle it. Throwing immediately
-      // saves 30s of wasted retry backoff per batch.
-      const is429 = msg.includes('429')
-      if (is429) {
-        throw err
+      // 429 = rate limited — retry with longer backoff (free tier friendly).
+      if (msg.includes('429')) {
+        if (attempt === MAX_RETRIES) throw err
+        const delayMs = 15000 * Math.pow(2, attempt) // 15s, 30s, 60s
+        console.warn(`[VLM:gemini] rate limited — retrying in ${delayMs / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES + 1})`)
+        await sleep(delayMs)
+        continue
       }
       const isRetryable = /5\d{2}|server error|timeout|econnreset|socket hang up|fetch failed|aborted/i.test(msg)
 
@@ -1566,16 +1568,17 @@ async function narrateImageBatchGroq(imgPaths: string[], batchStart: number): Pr
     } catch (err) {
       lastErr = err
       const msg = err instanceof Error ? err.message : String(err)
-      // 429 = rate limited. Don't retry — throw immediately so the circuit
-      // breaker + z-ai fallback handle it. Saves ~15s of wasted backoff.
-      const is429 = msg.includes('429')
-      if (is429) {
+      // 403 = forbidden (invalid key, model not available). Don't retry.
+      if (msg.includes('403')) {
         throw err
       }
-      // 403 = forbidden (invalid key, model not available). Don't retry.
-      const is403 = msg.includes('403')
-      if (is403) {
-        throw err
+      // 429 = rate limited — retry with longer backoff (free tier friendly).
+      if (msg.includes('429')) {
+        if (attempt === MAX_RETRIES) throw err
+        const delayMs = 15000 * Math.pow(2, attempt) // 15s, 30s, 60s
+        console.warn(`[VLM:groq] rate limited — retrying in ${delayMs / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES + 1})`)
+        await sleep(delayMs)
+        continue
       }
       const isRetryable = /5\d{2}|server error|timeout|econnreset|socket hang up|fetch failed|aborted/i.test(msg)
 
