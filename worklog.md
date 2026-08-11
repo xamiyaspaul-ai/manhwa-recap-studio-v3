@@ -900,3 +900,26 @@ Stage Summary:
 - No z.ai SDK usage — only OpenRouter/Groq/Gemini/Ollama providers
 - Key code changes: index.ts (settings fallback, scrape resume), lib.ts (z.ai removal, OpenRouter fixes)
 - Test job cmsn8baag0000q40eai33u5eu successfully transcribed and rendering
+---
+Task ID: 1
+Agent: main
+Task: Fix VLM transcription bug — early panels show empty text
+
+Work Log:
+- Diagnosed that the concurrency fix from commit 8584c73 was already applied (>=1 condition)
+- Identified the REAL root cause: OpenRouter default model `qwen/qwen3.7-flash` is TEXT-ONLY
+- Qwen 3 series has no vision variant — sending images to it caused silent failures
+- Round-robin assigned OpenRouter to early batches → all failed → empty text
+- After 3 errors, circuit breaker tripped → remaining batches went to Groq (works)
+- Fixed 3 issues in lib.ts:
+  1. Changed default model to `meta-llama/llama-4-scout:free` (vision-capable)
+  2. Batch retries now try a DIFFERENT provider (cross-provider fallback)
+  3. Increased inter-batch delay 2s → 4s
+- Committed as 6a5cf85 and pushed to main
+- Set up 15-min cron job (ID: 318006) for website QA/feature enhancement
+
+Stage Summary:
+- Root cause was wrong model, not concurrency — fixed
+- Cross-provider retry fallback adds robustness
+- User needs to `git pull` on cloud and restart pipeline-service
+
