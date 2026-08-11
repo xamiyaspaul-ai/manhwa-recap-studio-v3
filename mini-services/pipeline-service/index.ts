@@ -1507,19 +1507,7 @@ async function shutdown(signal: string) {
   setTimeout(() => process.exit(0), 5000).unref()
 }
 
-let sigtermCount = 0
-process.on('SIGTERM', () => {
-  sigtermCount++
-  console.error(`[pipeline-service] received SIGTERM (#${sigtermCount}) — pid=${process.pid} ppid=${process.ppid} pgrp=${process.getpgrp?.() ?? 'N/A'}`)
-  // Diagnostic: ignore the FIRST 3 SIGTERMs to see if something sends SIGKILL next.
-  // If the process stays alive, the killer is only using SIGTERM.
-  // If the process dies anyway, it's SIGKILL (OOM killer / cgroup).
-  if (sigtermCount <= 3) {
-    console.error(`[pipeline-service] IGNORING SIGTERM #${sigtermCount} (diagnostic — checking if SIGKILL follows)`)
-    return
-  }
-  void shutdown('SIGTERM')
-})
+process.on('SIGTERM', () => void shutdown('SIGTERM'))
 process.on('SIGINT', () => void shutdown('SIGINT'))
 
 // Handle uncaught errors so the service doesn't silently die.
