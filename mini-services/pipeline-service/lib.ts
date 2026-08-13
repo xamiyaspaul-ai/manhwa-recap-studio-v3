@@ -1011,7 +1011,7 @@ export async function generateImageNarrations(
 
   if (!HAS_REAL_PROVIDER) {
     console.warn('[VLM] No VLM providers available — panels will be silent')
-    console.warn('[VLM] To enable transcription: set GROQ_API_KEY, GEMINI_API_KEY, or install Ollama')
+    console.warn('[VLM] To enable transcription: set ZHIPU_API_KEY, GROQ_API_KEY, GEMINI_API_KEY, or install Ollama')
     return imagePaths.map((p) => ({ image: path.basename(p), text: '' }))
   }
 
@@ -1381,7 +1381,7 @@ async function narrateImageBatchGemini(imgPaths: string[], batchStart: number): 
   }
 
   const apiKey = process.env.GEMINI_API_KEY!
-  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash-lite-001'
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
 
   // Read + base64-encode each image.
@@ -1907,6 +1907,133 @@ async function narrateImageBatchOpenRouter(imgPaths: string[], batchStart: numbe
       if (!isRetryable || attempt === MAX_RETRIES) throw err
       const delayMs = BASE_DELAY_MS * Math.pow(2, attempt)
       console.warn(`[VLM:openrouter] batch retry ${attempt + 1}/${MAX_RETRIES + 1} failed (${msg.slice(0, 80)}) — retrying in ${delayMs}ms`)
+      await sleep(delayMs)
+    }
+  }
+
+  throw lastErr
+}
+
+/**
+ * Zhipu AI (GLM-4V-Flash) — free vision model, optimized for OCR/text extraction.
+ * OpenAI-compatible API at https://open.bigmodel.cn/api/paas/v4/chat/completions
+ * No rate limits on free tier. Same prompt + cache + parseBatchResponse pattern.
+ */
+async function narrateImageBatchZhipu(imgPaths: string[], batchStart: number): Promise<string[]> {
+  // Check cache first
+  const cachedResults: (string | null)[] = []
+  let allCached = true
+  for (const imgPath of imgPaths) {
+    const cached = await getVlmCached(vlmCacheKey(imgPath))
+    cachedResults.push(cached)
+    if (cached === null) allCached = false
+  }
+  if (allCached) {
+    console.log(`[VLM:zhipu] cache hit — all ${imgPaths.length} panels cached, skipping API call`)
+    return cachedResults as string[]
+  }
+
+  const apiKey = process.env.ZHIPU_API_KEY!
+  const model = process.env.ZHIPU_VLM_MODEL || 'glm-4v-flash'
+  const url = 'https://open.bigmodel.cn/api/paas/v4/chat/completions'
+
+  // Read + base64-encode each image.
+  const images: Array<{ mime: string; b64: string }> = []
+  for (const imgPath of imgPaths) {
+    const buf = await fs.readFile(imgPath)
+    const ext = path.extname(imgPath).toLowerCase()
+    const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
+    images.push({ mime, b64: buf.toString('base64') })
+  }
+
+  // Same transcription prompt as other providers.
+  const prompt =
+    `You are a precise transcriber for webtoon/manhwa panels, not a narrator. ` +
+    `I am sending you ${images.length} separate panel images, labeled Panel 1 through Panel ${images.length} ` +
+    `(in the order they appear below). For EACH panel, transcribe ONLY the actual text you can see inside ` +
+    `speech bubbles, thought bubbles, and caption/narration boxes — in the order a reader would naturally ` +
+    `read them (top to bottom, left to right within the panel). Translate to natural English if not already ` +
+    `in English, preserving meaning and tone.\n\n` +
+    `RESPONSE FORMAT: Return a JSON array with exactly ${images.length} elements, one per panel in order. ` +
+    `Each element is an object: {"index": <1-based panel number>, "text": "<transcribed text or empty string>"}.\n` +
+    `Output ONLY the JSON array — no preamble, no markdown fences, no explanation.\n` +
+    `Example for 2 panels: [{"index": 1, "text": "What is this place?"}, {"index": 2, "text": ""}]`
+
+  const content = [
+    { type: 'text', text: prompt },
+    ...images.map(img => ({
+      type: 'image_url',
+      image_url: { url: `data:${img.mime};base64,${img.b64}` },
+    })),
+  ]
+
+  const body = {
+    model,
+    messages: [{ role: 'user', content }],
+    temperature: 0.1,
+    max_tokens: 4096,
+  }
+
+  const MAX_RETRIES = 3
+  const BASE_DELAY_MS = 2000
+  let lastErr: unknown = null
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 60000)
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+      clearTimeout(timeout)
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '')
+        throw new Error(`Zhipu API ${res.status}: ${errText.slice(0, 200)}`)
+      }
+
+      const data = await res.json() as {
+        choices?: Array<{ message?: { content?: string } }>
+        error?: { message?: string }
+      }
+
+      if (data.error) {
+        throw new Error(`Zhipu error: ${data.error.message || JSON.stringify(data.error)}`)
+      }
+
+      const raw = data.choices?.[0]?.message?.content?.trim() ?? ''
+      const texts = parseBatchResponse(raw, images.length)
+
+      // Cache each panel's transcription.
+      for (let i = 0; i < imgPaths.length && i < texts.length; i++) {
+        if (texts[i]) {
+          await setVlmCached(vlmCacheKey(imgPaths[i]), texts[i])
+        }
+      }
+      return texts
+    } catch (err) {
+      lastErr = err
+      const msg = err instanceof Error ? err.message : String(err)
+      // 403 = forbidden. Don't retry.
+      if (msg.includes('403')) throw err
+      // 429 = rate limited — retry with longer backoff.
+      if (msg.includes('429')) {
+        if (attempt === MAX_RETRIES) throw err
+        const delayMs = 15000 * Math.pow(2, attempt) // 15s, 30s, 60s
+        console.warn(`[VLM:zhipu] rate limited — retrying in ${delayMs / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES + 1})`)
+        await sleep(delayMs)
+        continue
+      }
+      const isRetryable = /5\d{2}|server error|timeout|econnreset|socket hang up|fetch failed|aborted/i.test(msg)
+      if (!isRetryable || attempt === MAX_RETRIES) throw err
+      const delayMs = BASE_DELAY_MS * Math.pow(2, attempt)
+      console.warn(`[VLM:zhipu] batch retry ${attempt + 1}/${MAX_RETRIES + 1} failed (${msg.slice(0, 80)}) — retrying in ${delayMs}ms`)
       await sleep(delayMs)
     }
   }
