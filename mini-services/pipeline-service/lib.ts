@@ -915,7 +915,7 @@ export async function generateImageNarrations(
   // This sends a tiny test request to each configured provider to check if
   // the API key is valid and the service is reachable. Only providers that
   // pass the test are added to the active pool — no wasted time on dead keys.
-  type VlmProvider = 'zhipu' | 'groq' | 'gemini' | 'openrouter' | 'ollama' | 'z-ai'
+  type VlmProvider = 'siliconflow' | 'zhipu' | 'groq' | 'gemini' | 'openrouter' | 'ollama' | 'z-ai'
   const activeProviders: VlmProvider[] = [] // populated by pre-flight tests
   // z-ai (built-in SDK) is only available in the Z.ai sandbox environment.
   // On self-hosted instances, it doesn't work and causes process kills.
@@ -982,6 +982,16 @@ export async function generateImageNarrations(
         console.warn(`[VLM] ✗ Zhipu AI key invalid (HTTP ${res.status})`)
         return false
       }
+      if (provider === 'siliconflow' && process.env.SILICONFLOW_API_KEY) {
+        // SiliconFlow — OpenAI-compatible API, free Qwen2.5-VL.
+        const res = await fetch('https://api.siliconflow.cn/v1/user/info', {
+          headers: { Authorization: `Bearer ${process.env.SILICONFLOW_API_KEY}` },
+          signal: AbortSignal.timeout(10000),
+        })
+        if (res.ok) { console.log('[VLM] ✓ SiliconFlow key is valid'); return true }
+        console.warn(`[VLM] ✗ SiliconFlow key invalid (HTTP ${res.status})`)
+        return false
+      }
     } catch (e) {
       console.warn(`[VLM] ✗ ${provider} pre-flight test failed: ${e instanceof Error ? e.message.slice(0, 80) : e}`)
     }
@@ -991,27 +1001,29 @@ export async function generateImageNarrations(
   // Test all configured providers in parallel
   console.log('[VLM] Pre-flight: testing providers...')
   const tests = await Promise.all([
+    testProvider('siliconflow'),
     testProvider('zhipu'),
     testProvider('ollama'),
     testProvider('groq'),
     testProvider('gemini'),
     testProvider('openrouter'),
   ])
-  if (tests[0]) activeProviders.push('zhipu')
-  if (tests[1]) activeProviders.push('ollama')
-  if (tests[2]) activeProviders.push('groq')
-  if (tests[3]) activeProviders.push('gemini')
-  if (tests[4]) activeProviders.push('openrouter')
+  if (tests[0]) activeProviders.push('siliconflow')
+  if (tests[1]) activeProviders.push('zhipu')
+  if (tests[2]) activeProviders.push('ollama')
+  if (tests[3]) activeProviders.push('groq')
+  if (tests[4]) activeProviders.push('gemini')
+  if (tests[5]) activeProviders.push('openrouter')
 
   // Detect sandboxed environments where z-ai createVision gets killed.
   // If no real providers (groq/gemini/ollama/openrouter) are configured,
   // and we have no API keys, skip z-ai entirely to avoid process kills.
   const HAS_REAL_PROVIDER = activeProviders.length > 0
-  const HAS_API_KEYS = !!(process.env.ZHIPU_API_KEY || process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY)
+  const HAS_API_KEYS = !!(process.env.SILICONFLOW_API_KEY || process.env.ZHIPU_API_KEY || process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY)
 
   if (!HAS_REAL_PROVIDER) {
     console.warn('[VLM] No VLM providers available — panels will be silent')
-    console.warn('[VLM] To enable transcription: set ZHIPU_API_KEY, GROQ_API_KEY, GEMINI_API_KEY, or install Ollama')
+    console.warn('[VLM] To enable transcription: set SILICONFLOW_API_KEY, ZHIPU_API_KEY, GROQ_API_KEY, GEMINI_API_KEY, or install Ollama')
     return imagePaths.map((p) => ({ image: path.basename(p), text: '' }))
   }
 
@@ -1072,8 +1084,8 @@ export async function generateImageNarrations(
     if (currentPrimary && !excluded.has(currentPrimary) && available.includes(currentPrimary)) {
       return currentPrimary
     }
-    // Pick the first available as the new primary (priority: zhipu > groq > openrouter > gemini > ollama > z-ai)
-    const providerOrder: VlmProvider[] = ['zhipu', 'groq', 'openrouter', 'gemini', 'ollama', 'z-ai']
+    // Pick the first available as the new primary (priority: siliconflow > zhipu > openrouter > gemini > groq > ollama > z-ai)
+    const providerOrder: VlmProvider[] = ['siliconflow', 'zhipu', 'openrouter', 'gemini', 'groq', 'ollama', 'z-ai']
     for (const p of providerOrder) {
       if (available.includes(p)) {
         currentPrimary = p
@@ -1096,7 +1108,9 @@ export async function generateImageNarrations(
     let succeeded = false
     let countedPerImage = false  // set true if single-image fallback counted panels
     try {
-      if (providerLabel === 'zhipu') {
+      if (providerLabel === 'siliconflow') {
+        batchTexts = await narrateImageBatchSiliconFlow(images, startIdx)
+      } else if (providerLabel === 'zhipu') {
         batchTexts = await narrateImageBatchZhipu(images, startIdx)
       } else if (providerLabel === 'ollama') {
         batchTexts = await narrateImageBatchOllama(images, startIdx)
@@ -1177,7 +1191,8 @@ export async function generateImageNarrations(
               retryProvider = pickProvider(providerLabel)
               console.log(`[VLM] batch ${num}/${totalBatches} retry ${retry + 1} — switching to ${retryProvider} (was ${providerLabel})`)
             }
-            if (retryProvider === 'zhipu') batchTexts = await narrateImageBatchZhipu(images, startIdx)
+            if (retryProvider === 'siliconflow') batchTexts = await narrateImageBatchSiliconFlow(images, startIdx)
+            else if (retryProvider === 'zhipu') batchTexts = await narrateImageBatchZhipu(images, startIdx)
             else if (retryProvider === 'groq') batchTexts = await narrateImageBatchGroq(images, startIdx)
             else if (retryProvider === 'gemini') batchTexts = await narrateImageBatchGemini(images, startIdx)
             else if (retryProvider === 'openrouter') batchTexts = await narrateImageBatchOpenRouter(images, startIdx)
@@ -1381,7 +1396,7 @@ async function narrateImageBatchGemini(imgPaths: string[], batchStart: number): 
   }
 
   const apiKey = process.env.GEMINI_API_KEY!
-  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash'
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
 
   // Read + base64-encode each image.
@@ -1907,6 +1922,133 @@ async function narrateImageBatchOpenRouter(imgPaths: string[], batchStart: numbe
       if (!isRetryable || attempt === MAX_RETRIES) throw err
       const delayMs = BASE_DELAY_MS * Math.pow(2, attempt)
       console.warn(`[VLM:openrouter] batch retry ${attempt + 1}/${MAX_RETRIES + 1} failed (${msg.slice(0, 80)}) — retrying in ${delayMs}ms`)
+      await sleep(delayMs)
+    }
+  }
+
+  throw lastErr
+}
+
+/**
+ * SiliconFlow — free Qwen2.5-VL-7B-Instruct vision model.
+ * OpenAI-compatible API at https://api.siliconflow.cn/v1/chat/completions
+ * Free tier: 14M tokens/month. Same prompt + cache + parseBatchResponse pattern.
+ */
+async function narrateImageBatchSiliconFlow(imgPaths: string[], batchStart: number): Promise<string[]> {
+  // Check cache first
+  const cachedResults: (string | null)[] = []
+  let allCached = true
+  for (const imgPath of imgPaths) {
+    const cached = await getVlmCached(vlmCacheKey(imgPath))
+    cachedResults.push(cached)
+    if (cached === null) allCached = false
+  }
+  if (allCached) {
+    console.log(`[VLM:siliconflow] cache hit — all ${imgPaths.length} panels cached, skipping API call`)
+    return cachedResults as string[]
+  }
+
+  const apiKey = process.env.SILICONFLOW_API_KEY!
+  const model = process.env.SILICONFLOW_VLM_MODEL || 'Qwen/Qwen2.5-VL-7B-Instruct'
+  const url = 'https://api.siliconflow.cn/v1/chat/completions'
+
+  // Read + base64-encode each image.
+  const images: Array<{ mime: string; b64: string }> = []
+  for (const imgPath of imgPaths) {
+    const buf = await fs.readFile(imgPath)
+    const ext = path.extname(imgPath).toLowerCase()
+    const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
+    images.push({ mime, b64: buf.toString('base64') })
+  }
+
+  // Same transcription prompt as other providers.
+  const prompt =
+    `You are a precise transcriber for webtoon/manhwa panels, not a narrator. ` +
+    `I am sending you ${images.length} separate panel images, labeled Panel 1 through Panel ${images.length} ` +
+    `(in the order they appear below). For EACH panel, transcribe ONLY the actual text you can see inside ` +
+    `speech bubbles, thought bubbles, and caption/narration boxes — in the order a reader would naturally ` +
+    `read them (top to bottom, left to right within the panel). Translate to natural English if not already ` +
+    `in English, preserving meaning and tone.\n\n` +
+    `RESPONSE FORMAT: Return a JSON array with exactly ${images.length} elements, one per panel in order. ` +
+    `Each element is an object: {"index": <1-based panel number>, "text": "<transcribed text or empty string>"}.\n` +
+    `Output ONLY the JSON array — no preamble, no markdown fences, no explanation.\n` +
+    `Example for 2 panels: [{"index": 1, "text": "What is this place?"}, {"index": 2, "text": ""}]`
+
+  const content = [
+    { type: 'text', text: prompt },
+    ...images.map(img => ({
+      type: 'image_url',
+      image_url: { url: `data:${img.mime};base64,${img.b64}` },
+    })),
+  ]
+
+  const body = {
+    model,
+    messages: [{ role: 'user', content }],
+    temperature: 0.1,
+    max_tokens: 4096,
+  }
+
+  const MAX_RETRIES = 3
+  const BASE_DELAY_MS = 2000
+  let lastErr: unknown = null
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 60000)
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+      clearTimeout(timeout)
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '')
+        throw new Error(`SiliconFlow API ${res.status}: ${errText.slice(0, 200)}`)
+      }
+
+      const data = await res.json() as {
+        choices?: Array<{ message?: { content?: string } }>
+        error?: { message?: string }
+      }
+
+      if (data.error) {
+        throw new Error(`SiliconFlow error: ${data.error.message || JSON.stringify(data.error)}`)
+      }
+
+      const raw = data.choices?.[0]?.message?.content?.trim() ?? ''
+      const texts = parseBatchResponse(raw, images.length)
+
+      // Cache each panel's transcription.
+      for (let i = 0; i < imgPaths.length && i < texts.length; i++) {
+        if (texts[i]) {
+          await setVlmCached(vlmCacheKey(imgPaths[i]), texts[i])
+        }
+      }
+      return texts
+    } catch (err) {
+      lastErr = err
+      const msg = err instanceof Error ? err.message : String(err)
+      // 403 = forbidden. Don't retry.
+      if (msg.includes('403')) throw err
+      // 429 = rate limited — retry with longer backoff.
+      if (msg.includes('429')) {
+        if (attempt === MAX_RETRIES) throw err
+        const delayMs = 15000 * Math.pow(2, attempt) // 15s, 30s, 60s
+        console.warn(`[VLM:siliconflow] rate limited — retrying in ${delayMs / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES + 1})`)
+        await sleep(delayMs)
+        continue
+      }
+      const isRetryable = /5\d{2}|server error|timeout|econnreset|socket hang up|fetch failed|aborted/i.test(msg)
+      if (!isRetryable || attempt === MAX_RETRIES) throw err
+      const delayMs = BASE_DELAY_MS * Math.pow(2, attempt)
+      console.warn(`[VLM:siliconflow] batch retry ${attempt + 1}/${MAX_RETRIES + 1} failed (${msg.slice(0, 80)}) — retrying in ${delayMs}ms`)
       await sleep(delayMs)
     }
   }

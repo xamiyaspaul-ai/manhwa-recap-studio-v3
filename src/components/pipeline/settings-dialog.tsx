@@ -58,6 +58,7 @@ interface SettingsForm {
   geminiKey: string;
   openRouterKey: string;
   zhipuKey: string;
+  siliconFlowKey: string;
   autoArchive: boolean;
 }
 
@@ -69,6 +70,7 @@ const DEFAULTS: SettingsForm = {
   geminiKey: "",
   openRouterKey: "",
   zhipuKey: "",
+  siliconFlowKey: "",
   autoArchive: false,
 };
 
@@ -102,6 +104,7 @@ export function SettingsDialog() {
           geminiKey: s.geminiKey ?? "",
           openRouterKey: s.openRouterKey ?? "",
           zhipuKey: s.zhipuKey ?? "",
+          siliconFlowKey: s.siliconFlowKey ?? "",
           autoArchive: s.autoArchive ?? false,
         });
       }
@@ -169,6 +172,7 @@ export function SettingsDialog() {
           geminiKey: data.geminiKey ?? "",
           openRouterKey: data.openRouterKey ?? "",
           zhipuKey: data.zhipuKey ?? "",
+          siliconFlowKey: data.siliconFlowKey ?? "",
           autoArchive: data.autoArchive ?? false,
         }));
         toast({ title: "Settings imported", description: "Review and save to apply." });
@@ -354,6 +358,26 @@ export function SettingsDialog() {
                     <a href="https://open.bigmodel.cn" target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">
                       open.bigmodel.cn
                     </a>{' '}(free signup)
+                  </p>
+                </div>
+
+                <div className="space-y-2 rounded-md border border-primary/20 bg-primary/5 p-2">
+                  <Label htmlFor="siliconflow-key" className="text-xs font-medium flex items-center gap-1.5">
+                    <span className="inline-flex items-center justify-center rounded bg-primary/20 text-[9px] font-bold text-primary px-1 py-0.5 leading-none">BEST FREE</span>
+                    SiliconFlow API Key
+                  </Label>
+                  <Input
+                    id="siliconflow-key"
+                    type="password"
+                    placeholder="sk-..."
+                    value={form.siliconFlowKey}
+                    onChange={(e) => updateField("siliconFlowKey", e.target.value)}
+                  />
+                  <p className="text-[11px] text-muted-foreground/70">
+                    Free Qwen2.5-VL-7B (14M tokens/month). Primary VLM provider.{' '}
+                    <a href="https://cloud.siliconflow.cn" target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">
+                      cloud.siliconflow.cn
+                    </a>
                   </p>
                 </div>
               </div>

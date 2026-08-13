@@ -144,6 +144,7 @@ export interface CreateJobInput {
   geminiKey?: string;
   openRouterKey?: string;
   zhipuKey?: string;
+  siliconFlowKey?: string;
   openaiKey?: string;
   megaEmail?: string;
   megaPassword?: string;
@@ -168,6 +169,7 @@ export interface AppSettings {
   geminiKey: string;
   openRouterKey: string;
   zhipuKey: string;
+  siliconFlowKey: string;
   openaiKey: string;
   megaEmail: string;
   megaPassword: string;

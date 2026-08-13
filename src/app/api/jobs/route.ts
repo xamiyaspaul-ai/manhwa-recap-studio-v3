@@ -158,6 +158,7 @@ export async function POST(req: NextRequest) {
         geminiKey: body.geminiKey ?? null,
         openRouterKey: body.openRouterKey ?? null,
         zhipuKey: body.zhipuKey ?? null,
+        siliconFlowKey: body.siliconFlowKey ?? null,
         openaiKey: body.openaiKey ?? null,
         megaEmail: body.megaEmail ?? null,
         megaPassword: body.megaPassword ?? null,

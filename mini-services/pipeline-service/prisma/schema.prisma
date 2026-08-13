@@ -57,6 +57,7 @@ model Job {
   geminiKey   String?   // per-job Google Gemini API key (for VLM)
   openRouterKey String? // per-job OpenRouter API key (for VLM)
   zhipuKey       String? // per-job Zhipu AI API key (for VLM — GLM-4V-Flash)
+  siliconFlowKey String? // per-job SiliconFlow API key (for VLM — Qwen2.5-VL)
   openaiKey   String?   // per-job OpenAI api key (optional)
   megaEmail     String? // per-job Mega email (cloud archive)
   megaPassword  String? // per-job Mega password (cloud archive)

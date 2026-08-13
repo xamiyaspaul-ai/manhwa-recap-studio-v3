@@ -60,6 +60,7 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
   const [geminiKey, setGeminiKey] = useState("");
   const [openRouterKey, setOpenRouterKey] = useState("");
   const [zhipuKey, setZhipuKey] = useState("");
+  const [siliconFlowKey, setSiliconFlowKey] = useState("");
   const [megaEmail, setMegaEmail] = useState("");
   const [megaPassword, setMegaPassword] = useState("");
   const [autoArchive, setAutoArchive] = useState(false);
@@ -94,6 +95,7 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
         setGeminiKey(s.geminiKey ?? "");
         setOpenRouterKey(s.openRouterKey ?? "");
         setZhipuKey(s.zhipuKey ?? "");
+        setSiliconFlowKey(s.siliconFlowKey ?? "");
         setMegaEmail(s.megaEmail ?? "");
         setMegaPassword(s.megaPassword ?? "");
         setAutoArchive(s.autoArchive ?? false);
@@ -195,6 +197,7 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
           geminiKey,
           openRouterKey,
           zhipuKey,
+          siliconFlowKey,
           megaEmail,
           megaPassword,
           autoArchive,
@@ -226,6 +229,7 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
           geminiKey: geminiKey || undefined,
           openRouterKey: openRouterKey || undefined,
           zhipuKey: zhipuKey || undefined,
+          siliconFlowKey: siliconFlowKey || undefined,
           megaEmail: megaEmail || undefined,
           megaPassword: megaPassword || undefined,
           autoArchive,
@@ -243,7 +247,7 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
     } finally {
       setStarting(false);
     }
-  }, [groqKey, geminiKey, openRouterKey, zhipuKey, megaEmail, megaPassword, autoArchive, voice, language, chapterLimit, chapterSelectionMode, selectedChapterIds, translate, manga, onJobCreated]);
+  }, [groqKey, geminiKey, openRouterKey, zhipuKey, siliconFlowKey, megaEmail, megaPassword, autoArchive, voice, language, chapterLimit, chapterSelectionMode, selectedChapterIds, translate, manga, onJobCreated]);
 
   // --- Voice preview ---
   // Fetches a short edge-tts sample for the selected voice and plays it.
@@ -706,7 +710,7 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
           {/* Zhipu AI */}
           <div className="space-y-1">
             <Label className="text-xs font-medium" htmlFor="zhipuKey">
-              Zhipu AI <span className="text-muted-foreground">(free — GLM-4V-Flash, optimized for OCR)</span>
+              Zhipu AI <span className="text-muted-foreground">(free — GLM-4V-Flash, OCR-optimized)</span>
             </Label>
             <Input
               id="zhipuKey"
@@ -719,6 +723,26 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
             <a href="https://open.bigmodel.cn" target="_blank" rel="noopener noreferrer"
                className="text-[10px] text-primary underline underline-offset-2 hover:text-primary/80">
               open.bigmodel.cn (free signup)
+            </a>
+          </div>
+
+          {/* SiliconFlow — BEST FREE OPTION */}
+          <div className="space-y-1 rounded-md border border-primary/20 bg-primary/5 p-2">
+            <Label className="text-xs font-medium flex items-center gap-1.5" htmlFor="siliconFlowKey">
+              <span className="inline-flex items-center justify-center rounded bg-primary/20 text-[9px] font-bold text-primary px-1 py-0.5 leading-none">BEST FREE</span>
+              SiliconFlow <span className="text-muted-foreground">(free Qwen2.5-VL-7B, 14M tokens/mo)</span>
+            </Label>
+            <Input
+              id="siliconFlowKey"
+              type="password"
+              value={siliconFlowKey}
+              onChange={(e) => setSiliconFlowKey(e.target.value)}
+              placeholder="sk-..."
+              className="font-mono text-sm h-8"
+            />
+            <a href="https://cloud.siliconflow.cn" target="_blank" rel="noopener noreferrer"
+               className="text-[10px] text-primary underline underline-offset-2 hover:text-primary/80">
+              cloud.siliconflow.cn (free credits on signup)
             </a>
           </div>
         </div>
