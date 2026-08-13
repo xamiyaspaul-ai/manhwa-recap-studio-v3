@@ -143,6 +143,7 @@ export interface CreateJobInput {
   groqKey?: string;
   geminiKey?: string;
   openRouterKey?: string;
+  zhipuKey?: string;
   openaiKey?: string;
   megaEmail?: string;
   megaPassword?: string;
@@ -166,6 +167,7 @@ export interface AppSettings {
   groqKey: string;
   geminiKey: string;
   openRouterKey: string;
+  zhipuKey: string;
   openaiKey: string;
   megaEmail: string;
   megaPassword: string;

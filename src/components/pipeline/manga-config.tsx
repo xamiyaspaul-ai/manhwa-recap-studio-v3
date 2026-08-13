@@ -59,6 +59,7 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
   const [groqKey, setGroqKey] = useState("");
   const [geminiKey, setGeminiKey] = useState("");
   const [openRouterKey, setOpenRouterKey] = useState("");
+  const [zhipuKey, setZhipuKey] = useState("");
   const [megaEmail, setMegaEmail] = useState("");
   const [megaPassword, setMegaPassword] = useState("");
   const [autoArchive, setAutoArchive] = useState(false);
@@ -92,6 +93,7 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
         setGroqKey(s.groqKey ?? "");
         setGeminiKey(s.geminiKey ?? "");
         setOpenRouterKey(s.openRouterKey ?? "");
+        setZhipuKey(s.zhipuKey ?? "");
         setMegaEmail(s.megaEmail ?? "");
         setMegaPassword(s.megaPassword ?? "");
         setAutoArchive(s.autoArchive ?? false);
@@ -192,6 +194,7 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
           groqKey,
           geminiKey,
           openRouterKey,
+          zhipuKey,
           megaEmail,
           megaPassword,
           autoArchive,
@@ -222,6 +225,7 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
           groqKey: groqKey || undefined,
           geminiKey: geminiKey || undefined,
           openRouterKey: openRouterKey || undefined,
+          zhipuKey: zhipuKey || undefined,
           megaEmail: megaEmail || undefined,
           megaPassword: megaPassword || undefined,
           autoArchive,
@@ -239,7 +243,7 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
     } finally {
       setStarting(false);
     }
-  }, [groqKey, geminiKey, openRouterKey, megaEmail, megaPassword, autoArchive, voice, language, chapterLimit, chapterSelectionMode, selectedChapterIds, translate, manga, onJobCreated]);
+  }, [groqKey, geminiKey, openRouterKey, zhipuKey, megaEmail, megaPassword, autoArchive, voice, language, chapterLimit, chapterSelectionMode, selectedChapterIds, translate, manga, onJobCreated]);
 
   // --- Voice preview ---
   // Fetches a short edge-tts sample for the selected voice and plays it.
@@ -696,6 +700,25 @@ export function MangaConfig({ manga, onBack, onJobCreated }: MangaConfigProps) {
             <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer"
                className="text-[10px] text-primary underline underline-offset-2 hover:text-primary/80">
               openrouter.ai/keys (free tier available)
+            </a>
+          </div>
+
+          {/* Zhipu AI */}
+          <div className="space-y-1">
+            <Label className="text-xs font-medium" htmlFor="zhipuKey">
+              Zhipu AI <span className="text-muted-foreground">(free — GLM-4V-Flash, optimized for OCR)</span>
+            </Label>
+            <Input
+              id="zhipuKey"
+              type="password"
+              value={zhipuKey}
+              onChange={(e) => setZhipuKey(e.target.value)}
+              placeholder="..."
+              className="font-mono text-sm h-8"
+            />
+            <a href="https://open.bigmodel.cn" target="_blank" rel="noopener noreferrer"
+               className="text-[10px] text-primary underline underline-offset-2 hover:text-primary/80">
+              open.bigmodel.cn (free signup)
             </a>
           </div>
         </div>

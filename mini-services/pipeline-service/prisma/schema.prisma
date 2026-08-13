@@ -56,6 +56,7 @@ model Job {
   groqKey     String?   // per-job Groq api key (user-provided, also used for VLM)
   geminiKey   String?   // per-job Google Gemini API key (for VLM)
   openRouterKey String? // per-job OpenRouter API key (for VLM)
+  zhipuKey       String? // per-job Zhipu AI API key (for VLM — GLM-4V-Flash)
   openaiKey   String?   // per-job OpenAI api key (optional)
   megaEmail     String? // per-job Mega email (cloud archive)
   megaPassword  String? // per-job Mega password (cloud archive)

@@ -57,6 +57,7 @@ interface SettingsForm {
   groqKey: string;
   geminiKey: string;
   openRouterKey: string;
+  zhipuKey: string;
   autoArchive: boolean;
 }
 
@@ -67,6 +68,7 @@ const DEFAULTS: SettingsForm = {
   groqKey: "",
   geminiKey: "",
   openRouterKey: "",
+  zhipuKey: "",
   autoArchive: false,
 };
 
@@ -99,6 +101,7 @@ export function SettingsDialog() {
           groqKey: s.groqKey ?? "",
           geminiKey: s.geminiKey ?? "",
           openRouterKey: s.openRouterKey ?? "",
+          zhipuKey: s.zhipuKey ?? "",
           autoArchive: s.autoArchive ?? false,
         });
       }
@@ -165,6 +168,7 @@ export function SettingsDialog() {
           groqKey: data.groqKey ?? "",
           geminiKey: data.geminiKey ?? "",
           openRouterKey: data.openRouterKey ?? "",
+          zhipuKey: data.zhipuKey ?? "",
           autoArchive: data.autoArchive ?? false,
         }));
         toast({ title: "Settings imported", description: "Review and save to apply." });
@@ -333,6 +337,23 @@ export function SettingsDialog() {
                   />
                   <p className="text-[11px] text-muted-foreground/70">
                     For narration rewriting via language models.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="zhipu-key" className="text-xs font-medium">Zhipu AI API Key</Label>
+                  <Input
+                    id="zhipu-key"
+                    type="password"
+                    placeholder="..."
+                    value={form.zhipuKey}
+                    onChange={(e) => updateField("zhipuKey", e.target.value)}
+                  />
+                  <p className="text-[11px] text-muted-foreground/70">
+                    Free vision model (GLM-4V-Flash) for fast panel transcription.{' '}
+                    <a href="https://open.bigmodel.cn" target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">
+                      open.bigmodel.cn
+                    </a>{' '}(free signup)
                   </p>
                 </div>
               </div>

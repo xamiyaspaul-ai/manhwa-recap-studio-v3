@@ -857,6 +857,7 @@ async function processJob(jobId: string): Promise<void> {
     ['GROQ_API_KEY', job.groqKey, 'groqKey'],
     ['GEMINI_API_KEY', job.geminiKey, 'geminiKey'],
     ['OPENROUTER_API_KEY', job.openRouterKey, 'openRouterKey'],
+    ['ZHIPU_API_KEY', job.zhipuKey, 'zhipuKey'],
     ['OPENAI_API_KEY', job.openaiKey, 'openaiKey'],
   ]
   // Batch-read settings that we need (only for keys missing from the job).
