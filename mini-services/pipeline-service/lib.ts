@@ -915,7 +915,7 @@ export async function generateImageNarrations(
   // This sends a tiny test request to each configured provider to check if
   // the API key is valid and the service is reachable. Only providers that
   // pass the test are added to the active pool — no wasted time on dead keys.
-  type VlmProvider = 'groq' | 'gemini' | 'openrouter' | 'ollama' | 'z-ai'
+  type VlmProvider = 'zhipu' | 'groq' | 'gemini' | 'openrouter' | 'ollama' | 'z-ai'
   const activeProviders: VlmProvider[] = [] // populated by pre-flight tests
   // z-ai (built-in SDK) is only available in the Z.ai sandbox environment.
   // On self-hosted instances, it doesn't work and causes process kills.
@@ -972,6 +972,16 @@ export async function generateImageNarrations(
         console.warn(`[VLM] ✗ OpenRouter key invalid (HTTP ${res.status})`)
         return false
       }
+      if (provider === 'zhipu' && process.env.ZHIPU_API_KEY) {
+        // Zhipu AI (GLM-4V-Flash) — OpenAI-compatible API.
+        const res = await fetch('https://open.bigmodel.cn/api/paas/v4/models', {
+          headers: { Authorization: `Bearer ${process.env.ZHIPU_API_KEY}` },
+          signal: AbortSignal.timeout(10000),
+        })
+        if (res.ok) { console.log('[VLM] ✓ Zhipu AI key is valid'); return true }
+        console.warn(`[VLM] ✗ Zhipu AI key invalid (HTTP ${res.status})`)
+        return false
+      }
     } catch (e) {
       console.warn(`[VLM] ✗ ${provider} pre-flight test failed: ${e instanceof Error ? e.message.slice(0, 80) : e}`)
     }
@@ -981,21 +991,23 @@ export async function generateImageNarrations(
   // Test all configured providers in parallel
   console.log('[VLM] Pre-flight: testing providers...')
   const tests = await Promise.all([
+    testProvider('zhipu'),
     testProvider('ollama'),
     testProvider('groq'),
     testProvider('gemini'),
     testProvider('openrouter'),
   ])
-  if (tests[0]) activeProviders.push('ollama')
-  if (tests[1]) activeProviders.push('groq')
-  if (tests[2]) activeProviders.push('gemini')
-  if (tests[3]) activeProviders.push('openrouter')
+  if (tests[0]) activeProviders.push('zhipu')
+  if (tests[1]) activeProviders.push('ollama')
+  if (tests[2]) activeProviders.push('groq')
+  if (tests[3]) activeProviders.push('gemini')
+  if (tests[4]) activeProviders.push('openrouter')
 
   // Detect sandboxed environments where z-ai createVision gets killed.
   // If no real providers (groq/gemini/ollama/openrouter) are configured,
   // and we have no API keys, skip z-ai entirely to avoid process kills.
   const HAS_REAL_PROVIDER = activeProviders.length > 0
-  const HAS_API_KEYS = !!(process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY)
+  const HAS_API_KEYS = !!(process.env.ZHIPU_API_KEY || process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY)
 
   if (!HAS_REAL_PROVIDER) {
     console.warn('[VLM] No VLM providers available — panels will be silent')
@@ -1060,8 +1072,8 @@ export async function generateImageNarrations(
     if (currentPrimary && !excluded.has(currentPrimary) && available.includes(currentPrimary)) {
       return currentPrimary
     }
-    // Pick the first available as the new primary (priority: groq > openrouter > gemini > ollama > z-ai)
-    const providerOrder: VlmProvider[] = ['groq', 'openrouter', 'gemini', 'ollama', 'z-ai']
+    // Pick the first available as the new primary (priority: zhipu > groq > openrouter > gemini > ollama > z-ai)
+    const providerOrder: VlmProvider[] = ['zhipu', 'groq', 'openrouter', 'gemini', 'ollama', 'z-ai']
     for (const p of providerOrder) {
       if (available.includes(p)) {
         currentPrimary = p
@@ -1084,7 +1096,9 @@ export async function generateImageNarrations(
     let succeeded = false
     let countedPerImage = false  // set true if single-image fallback counted panels
     try {
-      if (providerLabel === 'ollama') {
+      if (providerLabel === 'zhipu') {
+        batchTexts = await narrateImageBatchZhipu(images, startIdx)
+      } else if (providerLabel === 'ollama') {
         batchTexts = await narrateImageBatchOllama(images, startIdx)
       } else if (providerLabel === 'groq') {
         batchTexts = await narrateImageBatchGroq(images, startIdx)
@@ -1163,7 +1177,8 @@ export async function generateImageNarrations(
               retryProvider = pickProvider(providerLabel)
               console.log(`[VLM] batch ${num}/${totalBatches} retry ${retry + 1} — switching to ${retryProvider} (was ${providerLabel})`)
             }
-            if (retryProvider === 'groq') batchTexts = await narrateImageBatchGroq(images, startIdx)
+            if (retryProvider === 'zhipu') batchTexts = await narrateImageBatchZhipu(images, startIdx)
+            else if (retryProvider === 'groq') batchTexts = await narrateImageBatchGroq(images, startIdx)
             else if (retryProvider === 'gemini') batchTexts = await narrateImageBatchGemini(images, startIdx)
             else if (retryProvider === 'openrouter') batchTexts = await narrateImageBatchOpenRouter(images, startIdx)
             else if (retryProvider === 'ollama') batchTexts = await narrateImageBatchOllama(images, startIdx)
